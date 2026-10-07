@@ -41,7 +41,7 @@ Versions checked 07/10/2026: [Node.js downloads](https://nodejs.org/en/download/
 3. Export từ source đầy đủ độ phân giải tạo file mở/đọc được, đúng W×H và overlay; không dùng preview làm nguồn.
 4. Source Blob + snapshot roundtrip qua IndexedDB; restore đúng và lỗi không làm mất document cũ.
 
-Gate 0 chỉ đạt khi các tiêu chí có bằng chứng bằng file thật. Day 1 mới ghi phạm vi/quyết định và dựng toolchain; chưa chạy spike hoặc đánh dấu AC nào đạt.
+Gate 0 chỉ đạt khi các tiêu chí có bằng chứng bằng file thật. Day 2 và Day 3 có bằng chứng cho các nhánh spike được giới hạn bên dưới; Gate 0 và AC sản phẩm vẫn chưa được đánh dấu đạt.
 
 ## Kết quả spike — Phase 0, Day 2 (07/10/2026)
 
@@ -50,3 +50,12 @@ Gate 0 chỉ đạt khi các tiêu chí có bằng chứng bằng file thật. D
 - Đường Fabric blob URL được chọn làm mặc định cho bước tích hợp sau: hỗ trợ AbortSignal trong khi load và đã kiểm tra 13 URL được revoke đúng một lần, gồm thành công, lỗi và hủy. Fallback ImageBitmap cũng pass nhưng `createImageBitmap` không nhận AbortSignal; hủy giữa lúc decode chỉ có thể bỏ kết quả và đóng bitmap sau khi hoàn tất.
 - Phiên bản/UA cụ thể của Codex In-app Browser không đọc được trong phiên này; không suy kết quả thành tương thích mọi browser. Chưa kiểm giới hạn kích thước, animation, màu/ICC, hiệu năng hoặc thiết bị mobile.
 - Typecheck và build pass; harness kiểm tra thủ công trên localhost. Không thêm dependency. Kết quả chỉ đạt tiêu chí decode Day 2; không chứng minh geometry/export/IndexedDB của Gate 0 và không đánh dấu AC sản phẩm đạt.
+
+## Kết quả spike — Phase 0, Day 3 (07/10/2026)
+
+- Thêm `src/features/editor/engine/day3Pipeline.ts` và `day3DraftStore.ts`, cùng harness thủ công `tests/manual/day3-spike.html` + `.ts`. Spike không nối vào app shell và không thêm dependency.
+- Trên PNG tổng hợp 3072×1536: crop 2304×1280 → resize 3456×1920 → xoay chiều kim đồng hồ ra 1920×3456; proxy preview là 2048×1024. Anchor text (2000,700) chuyển thành (1062,2424).
+- PNG export tạo Blob MIME `image/png`, decode trong browser đúng 1920×3456; alpha marker giữ nguyên và hash source không đổi. Preview sau restore hiển thị text; chưa tải file xuống/mở bằng ứng dụng ngoài hoặc kiểm pixel riêng cho glyph trong PNG export.
+- IndexedDB roundtrip sau reload giữ Blob hash, snapshot và transform. Thử transaction abort sau khi xếp các lệnh ghi thay thế xác nhận draft/source cũ còn nguyên. Bỏ handler `transaction.onerror` vì nó làm lời hứa trả lỗi chung trong đường abort chủ ý thay vì nhận AbortError từ `onabort`.
+- `npm.cmd run typecheck` và `npm.cmd run build` pass. Chạy lại cả hai decoder Day 2: fixture checks pass; Fabric path cũng pass abort và 13/13 URL cleanup. Chỉ Codex In-app Browser; browser version/UA không xác minh được.
+- Giới hạn: geometry/export mới thử một PNG tổng hợp và PNG output; chưa kiểm tra glyph trong file export theo pixel, nhiều nguồn/định dạng, lỗi quota/schema/đa tab hoặc browser/thiết bị khác. Kết quả này không đủ để đánh dấu Gate 0 hay AC sản phẩm đạt.

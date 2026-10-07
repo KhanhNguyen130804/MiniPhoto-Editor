@@ -2,7 +2,7 @@
 
 Ngày ghi nhận: **07/10/2026**, múi giờ Asia/Saigon. Đây là bản bàn giao bối cảnh tại thời điểm tạo tài liệu; kiểm tra lại Git và cây tệp trước khi tiếp tục.
 
-**Cập nhật Phase 0/Day 2:** checkout ở nhánh `codex/phase-0-spike`, theo dõi `origin/codex/phase-0-spike`, HEAD `644c71d8fc897722d9892672337bf685030943d4`. Day 2 có 5 tệp tracked sửa đổi (`docs/CONTEXT_SUMMARY.md`, `docs/DECISION_LOG.md`, `docs/WALKTHROUGH.md`, `docs/roadmap.md`, `tsconfig.json`) và thêm `src/features/` + `tests/`; chưa stage/commit. `main` không bị thay đổi.
+**Mốc hiện tại — Phase 0/Day 3:** checkout ở nhánh `codex/phase-0-spike`, theo dõi `origin/codex/phase-0-spike`, HEAD `50837f6e7e3b9510f43a4e546afe4f7713fe0daa`. Thay đổi Day 3 chưa stage/commit: `tsconfig.json`, bốn tài liệu trong `docs/`, hai engine spike và hai harness thủ công; `main` không bị thay đổi. Spike Day 3 vẫn tách khỏi app shell.
 
 ## 1. Mục tiêu sản phẩm
 
@@ -31,10 +31,10 @@ Hai tệp ban đầu được tạo tại gốc. Theo yêu cầu tiếp theo, đ
 | PRD | Có tài liệu mục 1–43, FR-01–15, AC-01–42; đã được commit |
 | Roadmap | Có kế hoạch 30 ngày công, 6 phase; là đề xuất, chưa triển khai |
 | Hướng dẫn agent | Có `AGENT.md`, quy tắc triển khai, 42 AC và hướng dẫn đọc hai tài liệu trong `docs/` |
-| Ứng dụng | React shell vẫn chỉ là tiêu đề; Day 2 thêm helper decode spike tại `src/features/editor/engine/imageImport.ts`, chưa được app gọi |
+| Ứng dụng | React shell vẫn chỉ là tiêu đề; Day 2 có helper decode, Day 3 có pipeline geometry/preview/PNG và IndexedDB spike cô lập; chưa được app gọi |
 | Toolchain | Có `package.json`, `package-lock.json`, Vite và TypeScript strict; `dev`, `typecheck`, `build`, `preview` |
-| Lưu trữ, export, dịch vụ | Chỉ được đặc tả trong tài liệu, chưa có implementation |
-| Kiểm thử/triển khai | App shell và helper typecheck/build pass; có manual harness Day 2, chưa có test sản phẩm hoặc AC đạt |
+| Lưu trữ, export, dịch vụ | IndexedDB draft và PNG export chỉ có trong Day 3 harness; chưa có lưu/export của sản phẩm |
+| Kiểm thử/triển khai | Typecheck/build pass; harness Day 2 được chạy lại; Day 3 geometry, PNG, reload/restore và abort rollback pass trong Codex In-app Browser; chưa có test sản phẩm hoặc AC được đánh dấu đạt |
 
 Wireframe ASCII, ví dụ TypeScript, cây thư mục và API nội bộ trong PRD là thiết kế đề xuất. Không coi chúng là mã ứng dụng hoặc dữ liệu mô phỏng đang chạy.
 
@@ -84,19 +84,21 @@ Luồng thiết kế: UI → command → trạng thái document/scene → snapsh
 | 4 — Hoàn thiện | 21–25 | Draft/lease, WebP, compare, mobile |
 | 5 — QA/release | 26–30 | AC có evidence, QA/performance/privacy/pilot |
 
-**Day 1 hoàn thành ở mức decision log/toolchain; Day 2 đã kiểm chứng decode fixtures; Gate 0 chưa đạt.** Ngày là ngày công tương đối, không phải lịch đã cam kết. Roadmap giả định một developer biết React/TypeScript, thêm dự phòng 15–25%. Không tự publish production dựa trên ngày 30.
+**Day 1 hoàn thành ở mức decision log/toolchain; Day 2 kiểm chứng decode fixtures; Day 3 có spike giới hạn cho geometry, PNG và một draft IndexedDB. Gate 0 vẫn chưa đạt.** Ngày là ngày công tương đối, không phải lịch đã cam kết. Roadmap giả định một developer biết React/TypeScript, thêm dự phòng 15–25%. Không tự publish production dựa trên ngày 30.
 
 ## 8. Kiểm tra và giới hạn bằng chứng
 
-Day 1: `npm.cmd install --no-audit --no-fund` hoàn tất và tạo lockfile; `npm.cmd run build` pass. Day 2: `npm.cmd run typecheck` và `npm.cmd run build` pass; chạy manual harness tại `/tests/manual/day2-import.html` trên `http://127.0.0.1:5173`. Cả Fabric blob URL lẫn ImageBitmap→canvas pass JPEG EXIF 1–8, PNG alpha, static WebP 1024×772, source hash bất biến, lỗi giữ candidate trước; Fabric path thêm abort và 13/13 Blob URL được revoke đúng một lần. Phiên bản browser không xác minh được. Chưa kiểm chứng tính năng editor, export sản phẩm hay IndexedDB. npm chưa cho phép script cài native của dependency tùy chọn `canvas`; đường Node canvas chưa được kiểm chứng.
+Day 1: `npm.cmd install --no-audit --no-fund` hoàn tất và tạo lockfile; `npm.cmd run build` pass. Day 2: `npm.cmd run typecheck` và `npm.cmd run build` pass; chạy lại manual harness tại `/tests/manual/day2-import.html` trên localhost với cả Fabric URL và ImageBitmap decoder. Hai đường đều pass JPEG EXIF 1–8, PNG alpha, static WebP 1024×772, source hash bất biến và lỗi giữ candidate trước; Fabric path cũng pass abort và 13/13 Blob URL revoke đúng một lần. Phiên bản browser không xác minh được.
+
+Day 3: `npm.cmd run typecheck` và `npm.cmd run build` pass. Harness `/tests/manual/day3-spike.html` tạo PNG tổng hợp 3072×1536; crop → resize → rotate ra document/PNG 1920×3456, preview proxy 2048×1024, anchor text chuyển tới (1062,2424), marker alpha trong PNG được giữ và source hash không đổi. Sau reload, IndexedDB khôi phục Blob hash, snapshot, transform và dimensions; transaction abort giữ draft/source cũ. Kết quả này chỉ áp dụng cho đường PNG tổng hợp và một origin/browser profile. Export Blob được decode trong browser nhưng không được tải/mở bằng ứng dụng ngoài; text nhìn thấy trong preview, song chưa có kiểm tra pixel riêng cho text trong PNG export. Browser version/UA không xác minh được. `canvas` native install script chưa được cho phép; Node-backed canvas chưa được kiểm chứng.
 
 Bằng chứng lịch sử trong hội thoại: PRD từng được commit/push và SHA remote được đối chiếu ở task trước; agent từng được kiểm đủ 42 AC. Lần tổ chức/xuất bản tài liệu tiếp theo có kiểm tra remote trước commit như mục 2; vẫn chưa có nghiệm thu ứng dụng. Xem [WALKTHROUGH.md](WALKTHROUGH.md).
 
 ## 9. Rủi ro và bước tiếp theo
 
-Rủi ro chính là chưa có spike chứng minh geometry/export fidelity, font/IME, bộ nhớ ảnh lớn và draft đa tab; các giới hạn vẫn là mục tiêu đề xuất; deadline chưa rõ. Helper Day 2 chưa được app gọi và chưa kiểm tra input limits/animation.
+Rủi ro chính là chưa có bằng chứng rộng cho geometry/export fidelity trên nhiều định dạng/fixtures, nội dung text trong PNG export, giới hạn bộ nhớ và draft lỗi/quota/đa tab; các giới hạn vẫn là mục tiêu đề xuất; deadline chưa rõ. Hai spike chưa được app gọi; input limits/animation và browser/thiết bị khác chưa kiểm tra.
 
-Bước tiếp theo trong roadmap là **ngày 3 của Phase 0**: thử crop → resize → rotate, snapshot/proxy, full-resolution export và IndexedDB roundtrip theo roadmap. Chỉ tiêu decode Day 2 đã có bằng chứng; không đánh dấu Gate 0 hoặc AC sản phẩm đạt trước khi các tiêu chí còn lại được xác minh.
+Bước tiếp theo là bổ sung bằng chứng còn thiếu cho Gate 0: xác minh overlay trong PNG export bằng pixel/output file và mở rộng geometry/export fixtures, sau đó quyết định có đủ cơ sở cho Gate 0 hay cần thêm spike. Không đánh dấu Gate 0 hoặc AC sản phẩm đạt từ kết quả harness giới hạn này.
 
 ## 10. Cách cập nhật
 

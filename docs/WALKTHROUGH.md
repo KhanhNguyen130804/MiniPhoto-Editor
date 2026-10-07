@@ -10,12 +10,12 @@ Tài liệu mô tả công việc tài liệu đã thực hiện và cách đọ
 |---|---|
 | [PRD_MINIPHOTO_EDITOR.md](../PRD_MINIPHOTO_EDITOR.md) | Đặc tả sản phẩm, FR, dữ liệu, kiến trúc, 42 AC và release gate |
 | [docs/roadmap.md](roadmap.md) | Kế hoạch triển khai theo từng ngày công, phase và gate |
-| [docs/DECISION_LOG.md](DECISION_LOG.md) | Quyết định stack, phạm vi MVP và tiêu chí Gate 0 cho Day 1 |
+| [docs/DECISION_LOG.md](DECISION_LOG.md) | Quyết định stack, phạm vi MVP, tiêu chí và kết quả spike Day 1–3 |
 | [AGENT.md](../AGENT.md) | Hướng dẫn làm việc, invariants, quy trình kiểm chứng/Git/bàn giao |
 | [CONTEXT_SUMMARY.md](CONTEXT_SUMMARY.md) | Bối cảnh ngắn để tiếp tục task, hiện trạng và các quyết định còn mở |
 | `WALKTHROUGH.md` | Giải thích đầu ra, quá trình và ranh giới bằng chứng |
 
-Sau Day 2, repository vẫn có app shell React/Vite tối thiểu, không có màn hình chỉnh ảnh hay luồng import/export/draft sản phẩm. Có một helper decode spike và manual harness cô lập để chọn API import.
+Sau Day 3, repository vẫn có app shell React/Vite tối thiểu, không có màn hình chỉnh ảnh hay luồng import/export/draft sản phẩm. Các helper và harness Day 2–3 đều là spike cô lập, chưa được app gọi.
 
 ## 2. Công việc trước task hiện tại — bằng chứng lịch sử
 
@@ -96,7 +96,17 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 
 ## 7. Hạng mục tiếp theo
 
-Day 1 ghi quyết định/toolchain; Day 2 đã kiểm chứng decode và source lifecycle trên fixtures thật. Bước kế tiếp là Day 3: crop/resize/rotate, snapshot/proxy, export và IndexedDB roundtrip; Gate 0 vẫn chưa đạt.
+Day 3 evidence từ harness thủ công (`tests/manual/day3-spike.html`):
+
+- Chạy `npm.cmd run dev -- --host 127.0.0.1`, rồi mở `http://127.0.0.1:5173/tests/manual/day3-spike.html`.
+- PNG tổng hợp 3072×1536 đi qua crop 2304×1280 → resize 3456×1920 → rotate clockwise, ra 1920×3456; preview proxy 2048×1024; text anchor ra (1062,2424).
+- Export Blob `image/png` decode đúng dimensions trong browser, alpha marker giữ nguyên, source hash bất biến. Preview sau restore hiển thị text; PNG export chưa có kiểm tra pixel riêng cho glyph và chưa được tải/mở ngoài browser.
+- IndexedDB giữ source Blob + snapshot qua reload; abort transaction thay draft giữ nguyên bản cũ. Có một lỗi harness ban đầu ở handler `transaction.onerror`; sau khi sửa, phép thử abort pass.
+- Typecheck/build pass; Day 2 import harness chạy lại với hai decoder và pass. Browser version/UA chưa xác minh; chưa thử nhiều fixture hình học, lỗi quota/schema hoặc nhiều tab.
+
+**Cập nhật 07/10/2026:** Day 3 đã chạy geometry, preview proxy, PNG export và IndexedDB reload/rollback trong harness cô lập; Gate 0 chưa đạt. Xem [kết quả Day 3](DECISION_LOG.md#kết-quả-spike--phase-0-day-3-07102026).
+
+Day 1 ghi quyết định/toolchain; Day 2 đã kiểm chứng decode và source lifecycle trên fixtures thật. Day 3 đã chạy spike giới hạn cho crop/resize/rotate, preview proxy, PNG export và IndexedDB roundtrip. Gate 0 vẫn chưa đạt.
 
 Khi ứng dụng có implementation, bổ sung walkthrough bằng thao tác thật, tệp bị tác động, lệnh đã chạy, browser/thiết bị, output và AC tương ứng. Ghi rõ lỗi/chưa chạy; không thay phần lịch sử bằng tuyên bố đã đạt.
 
