@@ -2,7 +2,7 @@
 
 Ngày ghi nhận: **07/10/2026**, Asia/Saigon.
 
-Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4 nhưng chưa có luồng chỉnh sửa ảnh sản phẩm; walkthrough phân biệt rõ shell, spike cô lập và hành vi đã kiểm chứng.
+Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4 và phần lifecycle/viewport canvas Day 5; chưa có luồng import hoặc chỉnh sửa ảnh sản phẩm. Walkthrough phân biệt shell, spike cô lập, implementation và hành vi đã kiểm chứng.
 
 ## 1. Kết quả hiện có
 
@@ -15,7 +15,7 @@ Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai
 | [CONTEXT_SUMMARY.md](CONTEXT_SUMMARY.md) | Bối cảnh ngắn để tiếp tục task, hiện trạng và các quyết định còn mở |
 | `WALKTHROUGH.md` | Giải thích đầu ra, quá trình và ranh giới bằng chứng |
 
-Sau Day 4, repository có các màn hình shell nhưng chưa có chỉnh sửa ảnh sản phẩm. Helper và harness Day 2–3 vẫn tách khỏi app.
+Sau Day 5, repository có các màn hình shell và Fabric Canvas rỗng được gắn vào Editor. Helper và harness Day 2–3 vẫn tách khỏi app; chưa có document ảnh để điều khiển hoặc xuất.
 
 ## 2. Công việc trước task hiện tại — bằng chứng lịch sử
 
@@ -96,9 +96,9 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 
 ## 7. Hiện trạng và bước tiếp theo
 
-**Đã hoàn thành trong task hiện tại:** Gate 0 được đánh giá lại bằng manual harness mở rộng; Day 4 app shell có các route `/`, `/editor`, `/privacy`, responsive layout, states và dialog native. Chi tiết evidence ở các mục 10–11 và [Decision Log](DECISION_LOG.md).
+**Hiện trạng:** Gate 0 được đánh giá lại bằng manual harness mở rộng; Day 4 app shell có các route `/`, `/editor`, `/privacy`, responsive layout, states và dialog native. Day 5 đã nối Fabric Canvas lifecycle, resize và viewport controls; build và spot-check StrictMode/resize pass, còn Fit/zoom trên document chưa xác minh. Chi tiết ở mục 12 và [Decision Log](DECISION_LOG.md).
 
-**Bước kế tiếp theo roadmap:** Day 5 tích hợp lifecycle canvas/editor cho mỗi mount, cleanup, resize observer, viewport và Fit/zoom. Gate 1 chưa đạt; import, history, rotate/flip và export sản phẩm chưa được triển khai.
+**Bước kế tiếp theo roadmap:** triển khai Day 6 import. Rà soát hiện trạng ở mục 13 xác nhận Day 6 chưa hoàn thành; Day 5 acceptance cần runtime kiểm tra trên document fixture. Gate 1 chưa đạt, import, history, rotate/flip và export sản phẩm chưa được triển khai.
 
 ## 8. Phase 0 — Day 1 (07/10/2026)
 
@@ -129,3 +129,18 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 - Dialog trợ giúp dùng `<dialog>.showModal()`, đóng bằng Escape và focus quay lại nút gọi. Privacy route nêu rõ app shell hiện chưa nhận/lưu ảnh; định hướng tương lai được đánh dấu riêng.
 - `npm.cmd run build` pass (bao gồm typecheck). Route và bố cục được kiểm trong browser ở 360 px, 820 px và 1366 px; đã sửa overflow ngang ở Editor 360 px. Chưa có test framework hoặc test sản phẩm.
 - Server fallback khi deploy production chưa được cấu hình/kiểm chứng; Vite local mở trực tiếp ba route. Tiếp theo là Day 5 canvas lifecycle, không coi shell này là Gate 1.
+
+## 12. Phase 1 — Day 5 (07/10/2026)
+
+- Thêm `src/features/editor/EditorCanvas.tsx` để tạo một Fabric `Canvas` cho mỗi component mount. Canvas instance ở ref; React StrictMode cleanup/replay được xử lý bằng hàng đợi chờ `dispose()` trước khi khởi tạo lại.
+- ResizeObserver cập nhật kích thước vùng render; cleanup disconnect observer và gọi `dispose()` để Fabric gỡ canvas/listener. Khi document có kích thước hợp lệ, resize giữ zoom hiện tại và căn giữa; Fit tính tỷ lệ vừa khung, zoom giới hạn 10–400% còn Fit có thể thấp hơn 10%.
+- `src/App.tsx` chuyển Editor sang component này; `.canvas-stage` giữ checkerboard/empty state. Vì import thuộc Day 6, `documentSize` hiện là `null`, kích thước hiển thị là placeholder và Fit/zoom vẫn disabled.
+- `npm.cmd run build` pass, gồm `tsc --noEmit` và `vite build`; Vite cảnh báo bundle JavaScript vượt 500 kB sau minify. Không thêm dependency hoặc test runner.
+- Trong Codex In-app Browser tại `/editor`, StrictMode để lại một `.canvas-container` với hai canvas nội bộ và không hiện runtime error; viewport 360×800 cập nhật surface/wrapper về 339 px. Browser version không xác minh. Fit/zoom chưa kiểm tra trên document vì chưa có import; Day 5 acceptance và Gate 1 chưa đạt đầy đủ.
+
+## 13. Phase 1 — Day 6 status review (07/10/2026)
+
+- **Kết luận: chưa hoàn thành.** `src/App.tsx` vẫn render nút “Chọn ảnh” disabled; chưa có file input hoặc handler kéo/thả. Editor nhận `documentSize={null}`, nên chưa có document ảnh để fit/zoom.
+- `src/features/editor/engine/imageImport.ts` chỉ có hai decoder helper; `tests/manual/day2-import.html` và `.ts` là harness spike Day 2, không được gọi từ luồng app.
+- Chưa thấy luồng sản phẩm kiểm tra một file, kích thước byte, MIME/header, dimensions/animation, decode, hủy picker hoặc xác nhận thay ảnh. Do đó AC-01–03 chưa có bằng chứng đạt; harness Day 2 không thay thế nghiệm thu này.
+- Đây là rà soát tĩnh theo source và tài liệu; không chạy build/test/app trong lần kiểm tra Day 6 này.

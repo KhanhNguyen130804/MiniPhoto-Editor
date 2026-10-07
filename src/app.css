@@ -798,6 +798,7 @@ button:disabled {
 }
 
 .canvas-stage {
+  position: relative;
   display: grid;
   min-width: 0;
   min-height: 360px;
@@ -811,7 +812,21 @@ button:disabled {
   background-size: 24px 24px;
 }
 
+.canvas-surface {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.canvas-surface > .canvas-container {
+  position: absolute !important;
+  top: 0;
+  left: 0;
+}
+
 .canvas-message {
+  position: relative;
+  z-index: 1;
   display: flex;
   width: min(400px, calc(100% - 32px));
   flex-direction: column;

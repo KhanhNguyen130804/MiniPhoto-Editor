@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import EditorCanvas from './features/editor/EditorCanvas';
 
 type PreviewState = 'empty' | 'loading' | 'error';
 type Route = 'home' | 'editor' | 'privacy' | 'not-found';
@@ -233,18 +234,9 @@ function EditorPage({ state }: { state: PreviewState }) {
         </aside>
 
         <main className="workspace" aria-label="Vùng làm việc">
-          <div className="canvas-stage">
+          <EditorCanvas documentSize={null}>
             <EditorStatus state={state} />
-          </div>
-          <div className="workspace-controls">
-            <span>Kích thước tài liệu <strong>— × — px</strong></span>
-            <div className="zoom-controls" aria-label="Điều khiển thu phóng">
-              <button type="button" disabled aria-label="Thu nhỏ">−</button>
-              <span>100%</span>
-              <button type="button" disabled aria-label="Phóng to">+</button>
-              <button className="fit-button" type="button" disabled>Vừa khung</button>
-            </div>
-          </div>
+          </EditorCanvas>
         </main>
 
         <aside
