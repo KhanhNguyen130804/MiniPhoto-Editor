@@ -15,5 +15,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "tests/manual/day2-import.ts", "tests/manual/day3-spike.ts"]
+  "include": ["src", "tests/manual/day2-import.ts", "tests/manual/day3-spike.ts", "tests/manual/day7-history.ts"]
 }

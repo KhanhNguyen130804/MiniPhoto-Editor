@@ -200,6 +200,7 @@ export async function validateImageFile(file: File, signal?: AbortSignal): Promi
 }
 
 export type ImageImportCandidate = {
+  assetId: string;
   source: File;
   image: FabricImage;
   width: number;
@@ -218,6 +219,7 @@ function candidate(source: File, image: FabricImage, release = () => {}): ImageI
   let disposed = false;
 
   return {
+    assetId: crypto.randomUUID(),
     source,
     image,
     width,

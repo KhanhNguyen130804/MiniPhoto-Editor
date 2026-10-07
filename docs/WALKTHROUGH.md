@@ -1,8 +1,8 @@
 # MiniPhoto Editor — Walkthrough
 
-Ngày ghi nhận: **07/10/2026**, Asia/Saigon.
+Ngày ghi nhận: **08/10/2026**, Asia/Saigon.
 
-Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4, canvas lifecycle/viewport Day 5 và luồng import ảnh Day 6. Các công cụ chỉnh sửa, history, export và lưu nháp sản phẩm chưa triển khai. Walkthrough phân biệt shell, spike cô lập, implementation và hành vi đã kiểm chứng.
+Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4, canvas lifecycle/viewport Day 5, luồng import ảnh Day 6 và history core Day 7. Chưa có lệnh chỉnh sửa sản phẩm, nên app chỉ có baseline và Undo/Redo vẫn disabled; export và lưu nháp sản phẩm chưa triển khai. Walkthrough phân biệt shell, spike cô lập, implementation và hành vi đã kiểm chứng.
 
 ## 1. Kết quả hiện có
 
@@ -15,7 +15,7 @@ Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai
 | [CONTEXT_SUMMARY.md](CONTEXT_SUMMARY.md) | Bối cảnh ngắn để tiếp tục task, hiện trạng và các quyết định còn mở |
 | `WALKTHROUGH.md` | Giải thích đầu ra, quá trình và ranh giới bằng chứng |
 
-Sau Day 6, Home và Editor dùng chung luồng chọn ảnh; dropzone Home nhận một file. Candidate hợp lệ được giải mã vào Fabric Canvas, fit viewport và có thể thay sau xác nhận. Harness Day 2 vẫn chứa kiểm tra decoder/validation thủ công. History, công cụ chỉnh sửa, export và persistence chưa có trong app.
+Sau Day 7, Home và Editor dùng chung luồng chọn ảnh; dropzone Home nhận một file. Candidate hợp lệ được giải mã vào Fabric Canvas, fit viewport và có thể thay sau xác nhận. Khi candidate được chấp nhận, `App` tạo snapshot baseline và history trong RAM; state này sống qua việc unmount/remount route. Harness Day 2 kiểm tra import, harness Day 7 kiểm tra history core. Chưa có lệnh chỉnh sửa tạo commit trong UI; export và persistence chưa có trong app.
 
 ## 2. Công việc trước task hiện tại — bằng chứng lịch sử
 
@@ -63,9 +63,15 @@ Tên `AGENT.md` là tên người dùng yêu cầu; tài liệu này không xác
 
 ### Nhập ảnh — Day 6 đã implementation
 
-Home → chọn hoặc thả đúng một JPG/PNG/WebP tĩnh → kiểm tra size/header/MIME/dimensions/animation → decode theo EXIF orientation → tạo candidate trong RAM → mở Editor và Fit viewport. Khi thay ảnh, app decode ứng viên trước; xác nhận mới thay candidate hiện tại. Lỗi hoặc hủy giữ ảnh đang mở. Direct `/editor` khi không có candidate trong phiên trả về Home; back/forward trong cùng phiên giữ candidate.
+Home → chọn hoặc thả đúng một JPG/PNG/WebP tĩnh → kiểm tra size/header/MIME/dimensions/animation → decode theo EXIF orientation → tạo candidate trong RAM → khi được chấp nhận, tạo source asset ID + baseline snapshot/history → mở Editor và Fit viewport. Khi thay ảnh, app decode ứng viên trước; xác nhận mới thay candidate và reset history về baseline mới. Lỗi hoặc hủy giữ ảnh/history đang mở. Direct `/editor` khi không có candidate trong phiên trả về Home; route changes trong cùng phiên giữ candidate/history.
 
-Đã kiểm thủ công xác nhận/hủy thay ảnh, lỗi giữ ảnh cũ, Fit/zoom cùng kích thước và back/forward. Người dùng xác nhận UI chỉ tải lên một ảnh; không ghi nhận kênh/thao tác/browser, nên chưa tính là kiểm tra thả nhiều file. Hủy picker chưa xác minh. Geometry, adjust, history, draft và export vẫn chưa implementation.
+Đã kiểm thủ công xác nhận/hủy thay ảnh, lỗi giữ ảnh cũ, Fit/zoom cùng kích thước và back/forward. Day 7 cũng kiểm route về Home giữ ảnh, cancel replacement giữ document, accept PNG thay WebP bằng document 3×1. Người dùng xác nhận UI chỉ tải lên một ảnh; không ghi nhận kênh/thao tác/browser, nên chưa tính là kiểm tra thả nhiều file. Hủy file picker chưa xác minh. Geometry, adjust, lệnh chỉnh sửa, draft và export vẫn chưa implementation.
+
+### Snapshot và history — Day 7 core
+
+`App` giữ `HistoryState<EditorSnapshot>` theo document; baseline gồm schema version, document W/H/source asset ID, appearance trung tính và transform source-image. History giữ JSON UTF-8, không giữ `File`, Fabric object, URL hoặc viewport. Commit no-op không tăng revision; commit sau undo loại redo branch; undo/redo tăng revision; giới hạn 50 bước undo và 10 MiB JSON, loại snapshot cũ nhất nhưng giữ current. Ảnh được chấp nhận tạo history mới; candidate pending/canceled không đổi history. Canvas nhận current snapshot để áp dụng transform source-image và document dimensions.
+
+Core được kiểm qua `/tests/manual/day7-history.html`. UI Undo/Redo phản ánh `canUndo`/`canRedo`, nhưng chưa thể bật vì chưa có edit command. Vì vậy, restore snapshot qua engine được kiểm bằng harness; thao tác người dùng → commit → canvas restore chưa được nghiệm thu end-to-end.
 
 ### Autosave và restore
 
@@ -96,9 +102,9 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 
 ## 7. Hiện trạng và bước tiếp theo
 
-**Hiện trạng:** Gate 0 đạt trong phạm vi harness; Day 4 app shell có route `/`, `/editor`, `/privacy`; Day 5 nối Fabric Canvas lifecycle/viewport; Day 6 import đã implementation và kiểm một phần. Người dùng xác nhận UI chỉ tải một ảnh, nhưng hủy picker chưa xác minh và chưa coi là kiểm tra thả nhiều file; AC-03 có bằng chứng một phần. Gate 1 chưa đạt. Chi tiết ở mục 12, 14 và [Decision Log](DECISION_LOG.md).
+**Hiện trạng:** Gate 0 đạt trong phạm vi harness; Day 4 app shell có route `/`, `/editor`, `/privacy`; Day 5 nối Fabric Canvas lifecycle/viewport; Day 6 import đã implementation và kiểm một phần; Day 7 history core và harness đã pass. Chưa có edit command trong app nên AC-23–25 chỉ có bằng chứng cho core, không cho chuỗi thao tác sản phẩm. AC-41 chưa xác minh trong phạm vi Day 7. Gate 1 chưa đạt vì rotate/flip và PNG/JPG export còn thiếu. AC-03 vẫn có bằng chứng một phần: UI multi-file drop và hủy file picker chưa kiểm; browser version/UA không được ghi nhận. Chi tiết ở mục 12, 14–15 và [Decision Log](DECISION_LOG.md).
 
-**Bước kế tiếp theo roadmap:** Day 7 baseline/history sau khi bổ sung spot-check AC-03. Gate 1 còn phụ thuộc history, rotate/flip và PNG/JPG export.
+**Bước kế tiếp theo roadmap:** Day 8 rotate/flip, pan/selection và PNG/JPG export; tích hợp edit command với history khi nằm trong phạm vi. Gate 1 còn phụ thuộc rotate/flip, export và chuỗi undo dùng được trong app.
 
 ## 8. Phase 0 — Day 1 (07/10/2026)
 
@@ -154,3 +160,12 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 - `npm.cmd run typecheck` pass. `npm.cmd run build` pass; Vite ghi cảnh báo bundle JS 525.21 kB vượt 500 kB. Manual harness trên Codex In-app Browser pass các assert mới và các fixture cũ: JPEG EXIF 1–8, alpha PNG, WebP tĩnh, corrupt, abort và 13/13 Blob URLs revoke đúng một lần.
 - Trong app localhost, JPEG EXIF 6 hiển thị 48×64 px; thay ảnh qua dialog được thử hủy và xác nhận; WebP 1024×772 Fit 69%, zoom 83%, thay bằng ảnh cùng kích thước trở về Fit 69%; corrupt replacement báo lỗi và vẫn giữ WebP cũ. Refresh `/editor` khi mất candidate về Home; back/forward trong cùng phiên vẫn giữ candidate. Canvas có một `.canvas-container` sau các lần thay ảnh.
 - Người dùng xác nhận UI chỉ tải lên một ảnh; kênh/thao tác/browser không được ghi nhận, vì vậy chưa tính là kiểm tra thả nhiều file. Hủy picker, mobile viewport, screen reader, browser khác và network audit chưa kiểm; browser version không xác minh. AC-03 có bằng chứng UI một phần; Gate 1 chưa đạt do history/rotate/flip/export cũng chưa triển khai.
+
+## 15. Phase 1 — Day 7 history core và kiểm chứng (08/10/2026)
+
+- Thêm `snapshot.ts` với snapshot schema version 1 cho document W/H/source asset ID, baseline appearance và source-image dimensions/transform/visibility/opacity. `ImageImportCandidate` có asset ID riêng; source `File`, `FabricImage`, object URL và viewport không được serialize.
+- Thêm `history.ts`: baseline, current snapshot, commit, no-op, undo/redo, availability, revision, giới hạn 50 undo step và 10 MiB theo UTF-8 JSON. Commit tạo nhánh mới sau undo; trim bỏ cũ nhất mà giữ current; snapshot không JSON hoặc đơn vượt budget bị từ chối trước khi state đổi.
+- `App` giữ history ở cấp ứng dụng và reset về baseline chỉ trong `activateCandidate` sau khi ảnh mới được chấp nhận. Candidate pending/hủy không chạm history. `EditorCanvas` lấy document size và transform ảnh nền từ current snapshot. Toolbar Undo/Redo đọc availability, nhưng chưa có edit command để tạo bước mới nên baseline không undo được.
+- Tạo `/tests/manual/day7-history.html` + `.ts`, thêm harness vào TypeScript config; không thêm dependency, test framework, persistence hay edit operation Day 8.
+- `npm.cmd run typecheck` pass; `npm.cmd run build` pass. Vite cảnh báo bundle JS 527.12 kB vượt 500 kB (Day 6 ghi nhận 525.21 kB). Harness chạy trong Codex In-app Browser và pass 7 nhóm assert: baseline JSON, full snapshot/no-op, undo/redo/branch, giới hạn 50 bước, budget 10 MiB, reject invalid/oversized, baseline document mới. `git diff --check` pass.
+- App localhost với fixture WebP 1024×772: Undo/Redo disabled tại baseline; route Home giữ candidate và browser back trở lại Editor với document còn nguyên. Hủy replacement bằng PNG giữ WebP 1024×772; xác nhận replacement tạo document PNG 3×1 và baseline mới, Undo/Redo tiếp tục disabled. Browser version, mobile, multi-file drop, file picker cancel, export, edit-command→canvas restore và lifecycle StrictMode trong phiên này chưa xác minh. AC-23–25 chỉ có bằng chứng core; AC-41 chưa xác minh; Gate 1 chưa đạt.

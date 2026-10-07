@@ -1,10 +1,11 @@
 import { Canvas, FabricImage } from 'fabric';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import type { EditorSnapshot } from './engine/snapshot';
 
 type Size = { width: number; height: number };
 
 type EditorCanvasProps = {
-  documentSize: Size | null;
+  snapshot: EditorSnapshot;
   image: FabricImage | null;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
   children: ReactNode;
@@ -45,11 +46,13 @@ function fitZoom(documentSize: Size, viewportSize: Size) {
   return Math.min(viewportSize.width / documentSize.width, viewportSize.height / documentSize.height, MAX_ZOOM);
 }
 
-export default function EditorCanvas({ documentSize, image, detachImageRef, children }: EditorCanvasProps) {
+export default function EditorCanvas({ snapshot, image, detachImageRef, children }: EditorCanvasProps) {
+  const documentSize: Size = snapshot.document;
   const surfaceRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<Canvas | null>(null);
   const documentSizeRef = useRef(documentSize);
   const imageRef = useRef(image);
+  const snapshotRef = useRef(snapshot);
   const attachedImageRef = useRef<FabricImage | null>(null);
   const viewportSizeRef = useRef<Size>({ width: 0, height: 0 });
   const disposeQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -59,6 +62,7 @@ export default function EditorCanvas({ documentSize, image, detachImageRef, chil
 
   documentSizeRef.current = documentSize;
   imageRef.current = image;
+  snapshotRef.current = snapshot;
 
   const detachImage = (target: FabricImage) => {
     const canvas = canvasRef.current;
@@ -76,10 +80,19 @@ export default function EditorCanvas({ documentSize, image, detachImageRef, chil
       canvas.remove(current);
       attachedImageRef.current = null;
     }
-    if (next && attachedImageRef.current !== next) {
+    if (next) {
+      const source = snapshotRef.current.scene.find((item) => item.role === 'source-image');
+      if (!source) throw new Error('Snapshot is missing its source image.');
       next.set({
-        left: 0,
-        top: 0,
+        left: source.left,
+        top: source.top,
+        scaleX: source.scaleX,
+        scaleY: source.scaleY,
+        angle: source.angle,
+        flipX: source.flipX,
+        flipY: source.flipY,
+        opacity: source.opacity,
+        visible: source.visible,
         originX: 'left',
         originY: 'top',
         selectable: false,
@@ -92,6 +105,8 @@ export default function EditorCanvas({ documentSize, image, detachImageRef, chil
         lockScalingX: true,
         lockScalingY: true,
       });
+    }
+    if (next && attachedImageRef.current !== next) {
       attachedImageRef.current = next;
       canvas.add(next);
     }
@@ -200,7 +215,7 @@ export default function EditorCanvas({ documentSize, image, detachImageRef, chil
     } catch {
       setCanvasError(true);
     }
-  }, [image]);
+  }, [image, snapshot]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

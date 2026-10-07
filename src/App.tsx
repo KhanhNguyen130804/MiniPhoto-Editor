@@ -1,6 +1,15 @@
-import { useEffect, useRef, useState, type MouseEvent, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import type { FabricImage } from 'fabric';
 import EditorCanvas from './features/editor/EditorCanvas';
+import {
+  canRedo,
+  canUndo,
+  createHistory,
+  currentSnapshot,
+  redoHistory,
+  undoHistory,
+  type HistoryState,
+} from './features/editor/engine/history';
 import {
   decodeWithFabricUrl,
   ImageImportError,
@@ -9,6 +18,7 @@ import {
   validateImageFile,
   type ImageImportCandidate,
 } from './features/editor/engine/imageImport';
+import { createImageBaselineSnapshot, type EditorSnapshot } from './features/editor/engine/snapshot';
 
 type PreviewState = 'empty' | 'loading' | 'error';
 type Route = 'home' | 'editor' | 'privacy' | 'not-found';
@@ -255,13 +265,23 @@ function EditorStatus({ status }: { status: ImportStatus }) {
 
 function EditorPage({
   candidate,
+  snapshot,
   status,
+  undoEnabled,
+  redoEnabled,
+  onUndo,
+  onRedo,
   onChoose,
   replaceButtonRef,
   detachImageRef,
 }: {
   candidate: ImageImportCandidate;
+  snapshot: EditorSnapshot;
   status: ImportStatus;
+  undoEnabled: boolean;
+  redoEnabled: boolean;
+  onUndo: () => void;
+  onRedo: () => void;
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
@@ -279,8 +299,8 @@ function EditorPage({
           <span className="document-name" title={candidate.source.name}>{candidate.source.name}</span>
         </div>
         <div className="editor-topbar__actions">
-          <button className="editor-quiet-button" type="button" disabled>Hoàn tác</button>
-          <button className="editor-quiet-button" type="button" disabled>Làm lại</button>
+          <button className="editor-quiet-button" type="button" onClick={onUndo} disabled={!undoEnabled}>Hoàn tác</button>
+          <button className="editor-quiet-button" type="button" onClick={onRedo} disabled={!redoEnabled}>Làm lại</button>
           <button className="editor-quiet-button" type="button" onClick={onChoose} ref={replaceButtonRef} disabled={status.phase === 'loading'}>
             Thay ảnh
           </button>
@@ -311,7 +331,7 @@ function EditorPage({
         <main className="workspace" aria-label="Vùng làm việc">
           <EditorCanvas
             image={candidate.image}
-            documentSize={{ width: candidate.width, height: candidate.height }}
+            snapshot={snapshot}
             detachImageRef={detachImageRef}
           >
             <EditorStatus status={status} />
@@ -340,7 +360,7 @@ function EditorPage({
       </div>
 
       <footer className="editor-statusbar">
-        <span>{candidate.width} × {candidate.height} px</span>
+        <span>{snapshot.document.width} × {snapshot.document.height} px</span>
         <a href="/privacy">Quyền riêng tư</a>
       </footer>
     </div>
@@ -390,6 +410,7 @@ export default function App() {
   const [route, setRoute] = useState<Route>(currentRoute);
   const state = previewState();
   const [candidate, setCandidate] = useState<ImageImportCandidate | null>(null);
+  const [editorHistory, setEditorHistory] = useState<HistoryState<EditorSnapshot> | null>(null);
   const [pendingCandidate, setPendingCandidate] = useState<ImageImportCandidate | null>(null);
   const [importStatus, setImportStatus] = useState<ImportStatus>(idleImportStatus);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -403,6 +424,10 @@ export default function App() {
   const detachImageRef = useRef<((image: FabricImage) => void) | null>(null);
   const routeRef = useRef(route);
   routeRef.current = route;
+  const editorSnapshot = useMemo(
+    () => editorHistory ? currentSnapshot(editorHistory) : null,
+    [editorHistory],
+  );
 
   const navigateTo = (path: string, replace = false) => {
     if (replace) window.history.replaceState({}, '', path);
@@ -436,12 +461,14 @@ export default function App() {
   };
 
   const activateCandidate = (next: ImageImportCandidate) => {
+    const nextHistory = createHistory(createImageBaselineSnapshot(next.assetId, next.width, next.height));
     const previous = activeCandidateRef.current;
     if (previous && previous !== next) {
       detachImageRef.current?.(previous.image);
     }
     activeCandidateRef.current = next;
     setCandidate(next);
+    setEditorHistory(nextHistory);
     previous?.dispose();
   };
 
@@ -475,12 +502,13 @@ export default function App() {
       }
 
       const next = decoded;
-      decoded = undefined;
       if (activeCandidateRef.current) {
         pendingCandidateRef.current = next;
         setPendingCandidate(next);
+        decoded = undefined;
       } else {
         activateCandidate(next);
+        decoded = undefined;
         navigateTo('/editor');
       }
       setImportStatus(idleImportStatus);
@@ -602,10 +630,15 @@ export default function App() {
           onImportFiles={(files, focusTarget) => { void importFiles(files, focusTarget); }}
         />
       )}
-      {displayRoute === 'editor' && candidate && (
+      {displayRoute === 'editor' && candidate && editorSnapshot && (
         <EditorPage
           candidate={candidate}
+          snapshot={editorSnapshot}
           status={importStatus}
+          undoEnabled={editorHistory ? canUndo(editorHistory) : false}
+          redoEnabled={editorHistory ? canRedo(editorHistory) : false}
+          onUndo={() => setEditorHistory((current) => current ? undoHistory(current) : current)}
+          onRedo={() => setEditorHistory((current) => current ? redoHistory(current) : current)}
           onChoose={openFilePicker}
           replaceButtonRef={editorReplaceButtonRef}
           detachImageRef={detachImageRef}
