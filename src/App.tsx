@@ -4,6 +4,7 @@ import EditorCanvas from './features/editor/EditorCanvas';
 import {
   canRedo,
   canUndo,
+  commitHistory,
   createHistory,
   currentSnapshot,
   redoHistory,
@@ -19,12 +20,28 @@ import {
   type ImageImportCandidate,
 } from './features/editor/engine/imageImport';
 import { createImageBaselineSnapshot, type EditorSnapshot } from './features/editor/engine/snapshot';
+import { transformDocument as transformEditorDocument, type GeometryCommand } from './features/editor/engine/geometry';
+import { exportImage, type ExportFormat } from './features/editor/engine/exportImage';
 
 type PreviewState = 'empty' | 'loading' | 'error';
 type Route = 'home' | 'editor' | 'privacy' | 'not-found';
 type ImportStatus = { phase: 'idle' | 'loading' } | { phase: 'error'; message: string };
 
 const idleImportStatus: ImportStatus = { phase: 'idle' };
+
+function makeExportBasename(sourceName: string): string {
+  const basename = sourceName.replace(/\.[^./\\]+$/, '').replace(/[<>:"/\\|?*\u0000-\u001f]/g, '').trim();
+  return `${basename || 'miniphoto'}-edited`.slice(0, 100);
+}
+
+function exportFilename(basename: string, format: ExportFormat): string {
+  const safe = basename
+    .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '')
+    .replace(/\.(?:png|jpe?g)$/i, '')
+    .trim()
+    .slice(0, 100) || 'miniphoto-edited';
+  return `${safe}.${format === 'jpeg' ? 'jpg' : 'png'}`;
+}
 
 function importErrorMessage(error: unknown): string {
   if (!(error instanceof ImageImportError)) return 'Không đọc được ảnh này. Hãy chọn ảnh khác hoặc chuyển định dạng.';
@@ -80,7 +97,7 @@ function HelpDialogTrigger({ dark = false }: { dark?: boolean }) {
         <p className="eyebrow">MINIPHOTO EDITOR</p>
         <h2 id="help-dialog-title">Bắt đầu thật đơn giản</h2>
         <p id="help-dialog-copy">
-          Bạn có thể mở một ảnh JPG, PNG hoặc WebP tĩnh. Các công cụ chỉnh sửa và lưu ảnh sẽ được bổ sung sau.
+          Bạn có thể mở một ảnh JPG, PNG hoặc WebP tĩnh, xoay/lật và tải ảnh xuống. Các công cụ chỉnh sửa khác và lưu bản nháp sẽ được bổ sung sau.
         </p>
         <div className="dialog-note">
           <strong>Cần trợ giúp ngay?</strong>
@@ -200,7 +217,7 @@ function HomePage({
               <li><span aria-hidden="true">✓</span> Chỉnh màu</li>
               <li><span aria-hidden="true">✓</span> Thêm chữ</li>
             </ul>
-            <p className="build-note">Ảnh được đọc trong trình duyệt. Các công cụ chỉnh sửa và lưu bản nháp sẽ được bổ sung sau.</p>
+            <p className="build-note">Ảnh được đọc trong trình duyệt. Bạn có thể xoay/lật và tải ảnh; các công cụ khác và lưu bản nháp sẽ được bổ sung sau.</p>
           </div>
 
           <section className={`import-card${state === 'error' || status.phase === 'error' ? ' import-card--error' : ''}`} aria-labelledby="import-title">
@@ -271,6 +288,7 @@ function EditorPage({
   redoEnabled,
   onUndo,
   onRedo,
+  onTransform,
   onChoose,
   replaceButtonRef,
   detachImageRef,
@@ -282,12 +300,75 @@ function EditorPage({
   redoEnabled: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  onTransform: (command: GeometryCommand) => void;
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
 }) {
   const tools = ['Cắt', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'];
   const [panelOpen, setPanelOpen] = useState(false);
+  const exportDialogRef = useRef<HTMLDialogElement>(null);
+  const exportUrlRef = useRef<string | null>(null);
+  const exportGenerationRef = useRef(0);
+  const [exportFormat, setExportFormat] = useState<ExportFormat>('png');
+  const [exportQuality, setExportQuality] = useState(90);
+  const [exportBackground, setExportBackground] = useState('#ffffff');
+  const [exportNameBase, setExportNameBase] = useState(() => makeExportBasename(candidate.source.name));
+  const [exportBytes, setExportBytes] = useState(0);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState('');
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
+
+  const clearDownload = () => {
+    if (exportUrlRef.current) URL.revokeObjectURL(exportUrlRef.current);
+    exportUrlRef.current = null;
+    setDownloadUrl(null);
+    setExportBytes(0);
+  };
+
+  useEffect(() => {
+    setExportNameBase(makeExportBasename(candidate.source.name));
+    setExportError('');
+    clearDownload();
+  }, [candidate.assetId]);
+
+  useEffect(() => () => {
+    exportGenerationRef.current += 1;
+    if (exportUrlRef.current) URL.revokeObjectURL(exportUrlRef.current);
+    exportUrlRef.current = null;
+  }, []);
+
+  const generateExport = async () => {
+    if (exportBusy) return;
+    clearDownload();
+    setExportError('');
+    setExportBusy(true);
+    const generation = ++exportGenerationRef.current;
+    try {
+      const blob = await exportImage(candidate, snapshot, {
+        format: exportFormat,
+        quality: exportQuality,
+        backgroundColor: exportBackground,
+      });
+      if (generation !== exportGenerationRef.current) return;
+      const url = URL.createObjectURL(blob);
+      exportUrlRef.current = url;
+      setDownloadUrl(url);
+      setExportBytes(blob.size);
+    } catch (error) {
+      if (generation === exportGenerationRef.current) {
+        setExportError(error instanceof Error ? error.message : 'Không thể tạo file ảnh. Hãy thử lại.');
+      }
+    } finally {
+      if (generation === exportGenerationRef.current) setExportBusy(false);
+    }
+  };
+
+  const closeExportDialog = () => {
+    if (exportBusy) return;
+    clearDownload();
+    setExportError('');
+  };
 
   return (
     <div className="editor-shell">
@@ -299,12 +380,22 @@ function EditorPage({
           <span className="document-name" title={candidate.source.name}>{candidate.source.name}</span>
         </div>
         <div className="editor-topbar__actions">
-          <button className="editor-quiet-button" type="button" onClick={onUndo} disabled={!undoEnabled}>Hoàn tác</button>
-          <button className="editor-quiet-button" type="button" onClick={onRedo} disabled={!redoEnabled}>Làm lại</button>
-          <button className="editor-quiet-button" type="button" onClick={onChoose} ref={replaceButtonRef} disabled={status.phase === 'loading'}>
+          <button className="editor-quiet-button" type="button" onClick={onUndo} disabled={!undoEnabled || exportBusy}>Hoàn tác</button>
+          <button className="editor-quiet-button" type="button" onClick={onRedo} disabled={!redoEnabled || exportBusy}>Làm lại</button>
+          <button className="editor-quiet-button" type="button" onClick={onChoose} ref={replaceButtonRef} disabled={status.phase === 'loading' || exportBusy}>
             Thay ảnh
           </button>
-          <button className="button button-primary editor-export" type="button" disabled>Xuất ảnh</button>
+          <button
+            className="button button-primary editor-export"
+            type="button"
+            disabled={exportBusy}
+            onClick={() => {
+              setExportError('');
+              exportDialogRef.current?.showModal();
+            }}
+          >
+            Xuất ảnh
+          </button>
           <button
             className="editor-properties-toggle"
             type="button"
@@ -333,6 +424,8 @@ function EditorPage({
             image={candidate.image}
             snapshot={snapshot}
             detachImageRef={detachImageRef}
+            onTransform={onTransform}
+            documentActionsDisabled={exportBusy}
           >
             <EditorStatus status={status} />
           </EditorCanvas>
@@ -363,6 +456,103 @@ function EditorPage({
         <span>{snapshot.document.width} × {snapshot.document.height} px</span>
         <a href="/privacy">Quyền riêng tư</a>
       </footer>
+
+      <dialog
+        ref={exportDialogRef}
+        className="export-dialog"
+        aria-labelledby="export-dialog-title"
+        onCancel={(event) => {
+          if (exportBusy) event.preventDefault();
+        }}
+        onClose={closeExportDialog}
+      >
+        <form method="dialog" className="dialog-close-row">
+          <button className="dialog-close" type="submit" aria-label="Đóng hộp thoại xuất ảnh" disabled={exportBusy}>×</button>
+        </form>
+        <p className="eyebrow">TẢI ẢNH VỀ THIẾT BỊ</p>
+        <h2 id="export-dialog-title">Xuất ảnh</h2>
+        <form
+          className="export-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void generateExport();
+          }}
+        >
+          <label>
+            Tên file
+            <span className="export-filename-field">
+              <input
+                value={exportNameBase}
+                maxLength={100}
+                disabled={exportBusy}
+                onChange={(event) => {
+                  setExportNameBase(event.currentTarget.value);
+                  clearDownload();
+                }}
+              />
+              <span>.{exportFormat === 'jpeg' ? 'jpg' : 'png'}</span>
+            </span>
+          </label>
+          <label>
+            Định dạng
+            <select
+              value={exportFormat}
+              disabled={exportBusy}
+              onChange={(event) => {
+                setExportFormat(event.currentTarget.value as ExportFormat);
+                clearDownload();
+              }}
+            >
+              <option value="png">PNG</option>
+              <option value="jpeg">JPG</option>
+            </select>
+          </label>
+          {exportFormat === 'jpeg' && (
+            <>
+              <label>
+                Chất lượng JPG: {exportQuality}
+                <input
+                  type="range"
+                  min="1"
+                  max="100"
+                  value={exportQuality}
+                  disabled={exportBusy}
+                  onChange={(event) => {
+                    setExportQuality(Number(event.currentTarget.value));
+                    clearDownload();
+                  }}
+                />
+              </label>
+              <label className="export-color-field">
+                Nền JPG
+                <input
+                  type="color"
+                  value={exportBackground}
+                  disabled={exportBusy}
+                  onChange={(event) => {
+                    setExportBackground(event.currentTarget.value);
+                    clearDownload();
+                  }}
+                />
+              </label>
+            </>
+          )}
+          <p className="export-resolution">Kích thước: {snapshot.document.width} × {snapshot.document.height} px</p>
+          <button className="button button-primary" type="submit" disabled={exportBusy}>
+            {exportBusy ? 'Đang tạo file…' : 'Tạo file'}
+          </button>
+        </form>
+        {exportBusy && <p className="export-status" role="status" aria-live="polite">Đang render ảnh ở kích thước tài liệu…</p>}
+        {exportError && <p className="export-error" role="alert">{exportError}</p>}
+        {downloadUrl && (
+          <div className="export-ready" role="status">
+            <span>File đã sẵn sàng ({exportBytes.toLocaleString('vi-VN')} byte)</span>
+            <a className="button button-primary" href={downloadUrl} download={exportFilename(exportNameBase, exportFormat)}>
+              Tải ảnh xuống
+            </a>
+          </div>
+        )}
+      </dialog>
     </div>
   );
 }
@@ -383,11 +573,11 @@ function PrivacyPage() {
 
         <section className="content-card" aria-labelledby="privacy-now-title">
           <h2 id="privacy-now-title">Hiện trạng bản dựng</h2>
-          <p>Ảnh được đọc và giải mã trong trình duyệt trên thiết bị. Bản dựng chưa tải ảnh lên máy chủ, lưu bản nháp hoặc tạo file xuất; khi tải lại hay đóng trang, ảnh đang mở sẽ không được giữ lại.</p>
+          <p>Ảnh được đọc, giải mã và xuất ngay trong trình duyệt trên thiết bị; bản dựng không tải ảnh lên máy chủ và chưa lưu bản nháp. Khi tải lại hoặc đóng trang, ảnh đang mở sẽ không được giữ lại.</p>
         </section>
         <section className="content-card" aria-labelledby="privacy-later-title">
           <h2 id="privacy-later-title">Các tính năng chưa có</h2>
-          <p>Lưu bản nháp và xuất ảnh chưa được triển khai. Thông tin về dung lượng, chế độ riêng tư và cách xóa dữ liệu sẽ được bổ sung khi các luồng đó hoạt động.</p>
+          <p>Lưu bản nháp chưa được triển khai. File chỉ được tạo khi bạn chủ động xuất; có thể xóa file đã tải xuống bằng công cụ quản lý tệp của thiết bị.</p>
         </section>
         <a className="button button-secondary" href="/">Quay lại trang chủ</a>
       </main>
@@ -433,6 +623,12 @@ export default function App() {
     if (replace) window.history.replaceState({}, '', path);
     else if (window.location.pathname !== path) window.history.pushState({}, '', path);
     setRoute(currentRoute());
+  };
+
+  const transformDocument = (command: GeometryCommand) => {
+    setEditorHistory((current) => current
+      ? commitHistory(current, transformEditorDocument(currentSnapshot(current), command))
+      : current);
   };
 
   const cancelInFlightImport = () => {
@@ -639,6 +835,7 @@ export default function App() {
           redoEnabled={editorHistory ? canRedo(editorHistory) : false}
           onUndo={() => setEditorHistory((current) => current ? undoHistory(current) : current)}
           onRedo={() => setEditorHistory((current) => current ? redoHistory(current) : current)}
+          onTransform={transformDocument}
           onChoose={openFilePicker}
           replaceButtonRef={editorReplaceButtonRef}
           detachImageRef={detachImageRef}

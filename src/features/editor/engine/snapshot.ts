@@ -1,3 +1,5 @@
+import type { TMat2D } from 'fabric';
+
 export type SourceImageSnapshot = {
   readonly id: string;
   readonly role: 'source-image';
@@ -22,6 +24,8 @@ export type EditorSnapshot = {
     readonly height: number;
     readonly sourceAssetId: string;
   };
+  /** Maps baseline scene coordinates into the current document coordinates. */
+  readonly documentTransform: TMat2D;
   readonly imageAppearance: {
     readonly presetId: string;
     readonly presetVersion: number;
@@ -45,6 +49,7 @@ export function createImageBaselineSnapshot(
   return {
     schemaVersion: 1,
     document: { width, height, sourceAssetId },
+    documentTransform: [1, 0, 0, 1, 0, 0],
     imageAppearance: {
       presetId: 'original',
       presetVersion: 1,

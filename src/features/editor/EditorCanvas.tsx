@@ -1,5 +1,6 @@
-import { Canvas, FabricImage } from 'fabric';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Canvas, FabricImage, type TMat2D } from 'fabric';
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { applyDocumentTransform, type GeometryCommand } from './engine/geometry';
 import type { EditorSnapshot } from './engine/snapshot';
 
 type Size = { width: number; height: number };
@@ -8,8 +9,12 @@ type EditorCanvasProps = {
   snapshot: EditorSnapshot;
   image: FabricImage | null;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
+  onTransform: (command: GeometryCommand) => void;
+  documentActionsDisabled: boolean;
   children: ReactNode;
 };
+
+type PanStart = { pointerId: number; x: number; y: number; transform: TMat2D };
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
@@ -46,7 +51,7 @@ function fitZoom(documentSize: Size, viewportSize: Size) {
   return Math.min(viewportSize.width / documentSize.width, viewportSize.height / documentSize.height, MAX_ZOOM);
 }
 
-export default function EditorCanvas({ snapshot, image, detachImageRef, children }: EditorCanvasProps) {
+export default function EditorCanvas({ snapshot, image, detachImageRef, onTransform, documentActionsDisabled, children }: EditorCanvasProps) {
   const documentSize: Size = snapshot.document;
   const surfaceRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<Canvas | null>(null);
@@ -56,8 +61,12 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, children
   const attachedImageRef = useRef<FabricImage | null>(null);
   const viewportSizeRef = useRef<Size>({ width: 0, height: 0 });
   const disposeQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const panStartRef = useRef<PanStart | null>(null);
   const [viewportSize, setViewportSize] = useState<Size>({ width: 0, height: 0 });
   const [zoom, setZoom] = useState(1);
+  const [panMode, setPanMode] = useState(false);
+  const [spacePan, setSpacePan] = useState(false);
+  const [panning, setPanning] = useState(false);
   const [canvasError, setCanvasError] = useState(false);
 
   documentSizeRef.current = documentSize;
@@ -105,6 +114,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, children
         lockScalingX: true,
         lockScalingY: true,
       });
+      applyDocumentTransform(next, snapshotRef.current.documentTransform);
     }
     if (next && attachedImageRef.current !== next) {
       attachedImageRef.current = next;
@@ -256,9 +266,91 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, children
     setZoom(fittedZoom);
   };
 
+  const startPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((!panMode && !spacePan) || event.button !== 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    event.preventDefault();
+    panStartRef.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      transform: [...canvas.viewportTransform] as TMat2D,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setPanning(true);
+  };
+
+  const movePan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const start = panStartRef.current;
+    const canvas = canvasRef.current;
+    if (!start || !canvas || start.pointerId !== event.pointerId) return;
+    const [a, b, c, d, e, f] = start.transform;
+    canvas.setViewportTransform([
+      a, b, c, d,
+      e + event.clientX - start.x,
+      f + event.clientY - start.y,
+    ]);
+  };
+
+  const endPan = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (panStartRef.current?.pointerId !== event.pointerId) return;
+    panStartRef.current = null;
+    setPanning(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const handleStageKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.code !== 'Space') return;
+    event.preventDefault();
+    if (event.repeat) return;
+    setSpacePan(true);
+  };
+
+  const handleStageKeyUp = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.code === 'Space') setSpacePan(false);
+  };
+
   return (
     <>
-      <div className="canvas-stage">
+      <div className="canvas-toolbar" role="toolbar" aria-label="Thao tác tài liệu">
+        <button type="button" aria-label="Xoay trái 90 độ" title="Xoay trái 90°" disabled={documentActionsDisabled} onClick={() => onTransform('rotate-left')}>
+          Xoay trái
+        </button>
+        <button type="button" aria-label="Xoay phải 90 độ" title="Xoay phải 90°" disabled={documentActionsDisabled} onClick={() => onTransform('rotate-right')}>
+          Xoay phải
+        </button>
+        <button type="button" aria-label="Lật ngang" title="Lật ngang" disabled={documentActionsDisabled} onClick={() => onTransform('flip-horizontal')}>
+          Lật ngang
+        </button>
+        <button type="button" aria-label="Lật dọc" title="Lật dọc" disabled={documentActionsDisabled} onClick={() => onTransform('flip-vertical')}>
+          Lật dọc
+        </button>
+        <button
+          type="button"
+          aria-pressed={panMode}
+          aria-label="Bật chế độ di chuyển khung nhìn"
+          className={panMode ? 'canvas-pan-toggle canvas-pan-toggle--active' : 'canvas-pan-toggle'}
+          onClick={() => setPanMode((active) => !active)}
+        >
+          Di chuyển
+        </button>
+      </div>
+      <div
+        className={`canvas-stage${panMode || spacePan ? ' canvas-stage--pan' : ''}${panning ? ' canvas-stage--panning' : ''}`}
+        tabIndex={0}
+        aria-label="Vùng xem ảnh. Giữ Space và kéo, hoặc bật chế độ Di chuyển."
+        onPointerDown={startPan}
+        onPointerMove={movePan}
+        onPointerUp={endPan}
+        onPointerCancel={endPan}
+        onLostPointerCapture={endPan}
+        onKeyDown={handleStageKeyDown}
+        onKeyUp={handleStageKeyUp}
+        onBlur={() => setSpacePan(false)}
+      >
         <div className="canvas-surface" ref={surfaceRef} aria-hidden="true" />
         {canvasError ? (
           <div className="canvas-message canvas-runtime-error" role="alert">
