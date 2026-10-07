@@ -41,7 +41,7 @@ Versions checked 07/10/2026: [Node.js downloads](https://nodejs.org/en/download/
 3. Export từ source đầy đủ độ phân giải tạo file mở/đọc được, đúng W×H và overlay; không dùng preview làm nguồn.
 4. Source Blob + snapshot roundtrip qua IndexedDB; restore đúng và lỗi không làm mất document cũ.
 
-Gate 0 chỉ đạt khi các tiêu chí có bằng chứng bằng file thật. Day 2 và Day 3 có bằng chứng cho các nhánh spike được giới hạn bên dưới; Gate 0 và AC sản phẩm vẫn chưa được đánh dấu đạt.
+Gate 0 chỉ đạt khi các tiêu chí có bằng chứng bằng file thật. Các mục Day 2/Day 3 bên dưới ghi nhận kết quả tại thời điểm ban đầu; đánh giá lại Gate 0 và giới hạn hiện tại được ghi ở cuối tài liệu.
 
 ## Kết quả spike — Phase 0, Day 2 (07/10/2026)
 
@@ -59,3 +59,20 @@ Gate 0 chỉ đạt khi các tiêu chí có bằng chứng bằng file thật. D
 - IndexedDB roundtrip sau reload giữ Blob hash, snapshot và transform. Thử transaction abort sau khi xếp các lệnh ghi thay thế xác nhận draft/source cũ còn nguyên. Bỏ handler `transaction.onerror` vì nó làm lời hứa trả lỗi chung trong đường abort chủ ý thay vì nhận AbortError từ `onabort`.
 - `npm.cmd run typecheck` và `npm.cmd run build` pass. Chạy lại cả hai decoder Day 2: fixture checks pass; Fabric path cũng pass abort và 13/13 URL cleanup. Chỉ Codex In-app Browser; browser version/UA không xác minh được.
 - Giới hạn: geometry/export mới thử một PNG tổng hợp và PNG output; chưa kiểm tra glyph trong file export theo pixel, nhiều nguồn/định dạng, lỗi quota/schema/đa tab hoặc browser/thiết bị khác. Kết quả này không đủ để đánh dấu Gate 0 hay AC sản phẩm đạt.
+
+## Đánh giá lại Gate 0 và Phase 1 — Day 4 (07/10/2026)
+
+### Gate 0 reassessment
+
+- Mở rộng `tests/manual/day3-spike.ts` để kiểm tra pixel text trong PNG export, chi tiết tần số cao từ PNG 3072×1536, fixture WebP tĩnh qua crop/rotate/preview/export, và IndexedDB save/restore với source WebP.
+- PNG tổng hợp crop 2304×1280 → resize 3456×1920 → rotate thành 1920×3456. Preview proxy 2048×1024, anchor text (1062,2424). Blob PNG decode đúng MIME/dimensions; pixel text, alpha marker, stripe detail và SHA-256 source pass. Luminance sọc đo được 65–217 sau phép scale/rotate; harness kiểm tra số pixel sáng/tối và độ tương phản thay vì đòi pixel sáng >220.
+- Fixture WebP 1024×772 qua crop 16 px và xoay chiều kim đồng hồ cho preview/export 740×992; overlay pixel và hash nguồn pass. IndexedDB restore sau reload khớp source hash, snapshot và transform; transaction abort giữ nguyên draft/source cũ.
+- **Kết luận:** Gate 0 đạt cho các nhánh spike được kiểm tra. Đây không phải AC sản phẩm: các helper vẫn chưa được app gọi; mới có một Codex In-app Browser/origin; chưa tải/mở PNG bằng ứng dụng ngoài, chưa thử browser khác, quota/schema lỗi, đa tab hoặc biên bộ nhớ.
+
+### Phase 1 — Day 4 app shell
+
+- `src/App.tsx` dựng route `/`, `/editor`, `/privacy`, trạng thái rỗng và preview loading/error chỉ trong dev bằng `?preview=loading|error`; không thêm router/dependency. Route navigation dùng link trình duyệt; route được mở trực tiếp qua Vite local server.
+- `src/app.css` đặt tokens Home sáng/Editor tối, layout desktop, tablet drawer thuộc tính và mobile rail/panel. Native `<dialog>.showModal()` đóng bằng Escape và trả focus cho nút mở.
+- Privacy page phân biệt hiện trạng (chưa nhận/lưu ảnh) với định hướng sản phẩm tương lai. Import, canvas, tool, history và export ở shell đang disabled; chưa thuộc Day 4.
+- Browser review ở viewport 360×800, 820×1024 và 1366×768 xác nhận bố cục Home/Editor/Privacy; một overflow ngang tại Editor 360 px đã được sửa. Dialog được mở/đóng bằng Escape và focus return được quan sát.
+- `npm.cmd run build` pass (bao gồm typecheck); không thêm dependency hoặc test framework. Production host fallback cho `/editor` và `/privacy` chưa cấu hình/kiểm chứng; browser version/UA chưa xác minh.

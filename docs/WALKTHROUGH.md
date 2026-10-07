@@ -2,7 +2,7 @@
 
 Ngày ghi nhận: **07/10/2026**, Asia/Saigon.
 
-Tài liệu mô tả công việc tài liệu đã thực hiện và cách đọc dự án hiện tại. Chưa có ứng dụng để hướng dẫn demo thao tác thực tế. Luồng sử dụng phía dưới là thiết kế dự kiến, không phải kết quả chạy thành công.
+Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4 nhưng chưa có luồng chỉnh sửa ảnh sản phẩm; walkthrough phân biệt rõ shell, spike cô lập và hành vi đã kiểm chứng.
 
 ## 1. Kết quả hiện có
 
@@ -15,7 +15,7 @@ Tài liệu mô tả công việc tài liệu đã thực hiện và cách đọ
 | [CONTEXT_SUMMARY.md](CONTEXT_SUMMARY.md) | Bối cảnh ngắn để tiếp tục task, hiện trạng và các quyết định còn mở |
 | `WALKTHROUGH.md` | Giải thích đầu ra, quá trình và ranh giới bằng chứng |
 
-Sau Day 3, repository vẫn có app shell React/Vite tối thiểu, không có màn hình chỉnh ảnh hay luồng import/export/draft sản phẩm. Các helper và harness Day 2–3 đều là spike cô lập, chưa được app gọi.
+Sau Day 4, repository có các màn hình shell nhưng chưa có chỉnh sửa ảnh sản phẩm. Helper và harness Day 2–3 vẫn tách khỏi app.
 
 ## 2. Công việc trước task hiện tại — bằng chứng lịch sử
 
@@ -94,21 +94,11 @@ Compare dùng render tạm theo geometry hiện tại, bỏ màu/filter và ẩn
 
 Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm bằng chứng runtime. Kết quả kiểm tra văn bản chỉ chứng minh đầu ra tài liệu, không chứng minh tính đúng của engine, export hoặc IndexedDB.
 
-## 7. Hạng mục tiếp theo
+## 7. Hiện trạng và bước tiếp theo
 
-Day 3 evidence từ harness thủ công (`tests/manual/day3-spike.html`):
+**Đã hoàn thành trong task hiện tại:** Gate 0 được đánh giá lại bằng manual harness mở rộng; Day 4 app shell có các route `/`, `/editor`, `/privacy`, responsive layout, states và dialog native. Chi tiết evidence ở các mục 10–11 và [Decision Log](DECISION_LOG.md).
 
-- Chạy `npm.cmd run dev -- --host 127.0.0.1`, rồi mở `http://127.0.0.1:5173/tests/manual/day3-spike.html`.
-- PNG tổng hợp 3072×1536 đi qua crop 2304×1280 → resize 3456×1920 → rotate clockwise, ra 1920×3456; preview proxy 2048×1024; text anchor ra (1062,2424).
-- Export Blob `image/png` decode đúng dimensions trong browser, alpha marker giữ nguyên, source hash bất biến. Preview sau restore hiển thị text; PNG export chưa có kiểm tra pixel riêng cho glyph và chưa được tải/mở ngoài browser.
-- IndexedDB giữ source Blob + snapshot qua reload; abort transaction thay draft giữ nguyên bản cũ. Có một lỗi harness ban đầu ở handler `transaction.onerror`; sau khi sửa, phép thử abort pass.
-- Typecheck/build pass; Day 2 import harness chạy lại với hai decoder và pass. Browser version/UA chưa xác minh; chưa thử nhiều fixture hình học, lỗi quota/schema hoặc nhiều tab.
-
-**Cập nhật 07/10/2026:** Day 3 đã chạy geometry, preview proxy, PNG export và IndexedDB reload/rollback trong harness cô lập; Gate 0 chưa đạt. Xem [kết quả Day 3](DECISION_LOG.md#kết-quả-spike--phase-0-day-3-07102026).
-
-Day 1 ghi quyết định/toolchain; Day 2 đã kiểm chứng decode và source lifecycle trên fixtures thật. Day 3 đã chạy spike giới hạn cho crop/resize/rotate, preview proxy, PNG export và IndexedDB roundtrip. Gate 0 vẫn chưa đạt.
-
-Khi ứng dụng có implementation, bổ sung walkthrough bằng thao tác thật, tệp bị tác động, lệnh đã chạy, browser/thiết bị, output và AC tương ứng. Ghi rõ lỗi/chưa chạy; không thay phần lịch sử bằng tuyên bố đã đạt.
+**Bước kế tiếp theo roadmap:** Day 5 tích hợp lifecycle canvas/editor cho mỗi mount, cleanup, resize observer, viewport và Fit/zoom. Gate 1 chưa đạt; import, history, rotate/flip và export sản phẩm chưa được triển khai.
 
 ## 8. Phase 0 — Day 1 (07/10/2026)
 
@@ -124,3 +114,18 @@ Khi ứng dụng có implementation, bổ sung walkthrough bằng thao tác th�
 - Trong Codex In-app Browser trên localhost, cả `FabricImage.fromURL(blob URL, { signal })` và `createImageBitmap` → canvas → FabricImage pass bộ JPEG EXIF 1–8 (kích thước và bốn vùng màu), PNG alpha 0/128/255, WebP tĩnh 1024×772. Hash source trước/sau không đổi. Corrupt JPEG bị từ chối và candidate trước vẫn dùng được. Fabric path hủy được và 13/13 Blob URL được revoke đúng một lần. ImageBitmap path pass nội dung nhưng không thể dừng decode đang chạy.
 - `npm.cmd run typecheck` pass; `npm.cmd run build` pass. Không thêm dependency, test framework hoặc UI sản phẩm. Browser version/UA không được xác minh; kiểm tra này chưa bao quát browser khác, animation, giới hạn file, ICC/profile, mobile, geometry, export sản phẩm hoặc IndexedDB.
 - Day 2 có bằng chứng decode spike, không đánh dấu AC sản phẩm hay Gate 0 đạt. Quyết định và các giới hạn được ghi trong `docs/DECISION_LOG.md`; roadmap chuyển bước tiếp theo sang Day 3.
+
+## 10. Phase 0 — Day 3 và đánh giá lại Gate 0 (07/10/2026)
+
+- Mở rộng harness `tests/manual/day3-spike.html`: kiểm tra pixel chữ và tương phản chi tiết trong PNG export, thêm fixture WebP tĩnh qua crop/rotate/preview/export, đồng thời lưu/restore source WebP và snapshot qua IndexedDB.
+- Trên Codex In-app Browser, PNG tổng hợp 3072×1536 qua crop → resize → rotate thành 1920×3456; preview proxy 2048×1024; text anchor ra (1062,2424). PNG Blob `image/png` decode đúng dimensions; pixel overlay, alpha marker và hash source pass. Sọc nguồn được đo ở luminance 65–217 sau scale/rotate; tiêu chí dùng nhiều pixel sáng/tối và độ tương phản để tính đến nội suy.
+- Fixture WebP 1024×772 qua crop 16 px và rotate tạo preview/export 740×992; overlay trong PNG và hash WebP nguồn pass. Sau reload, IndexedDB restore khớp hash/snapshot/transform; transaction abort giữ draft cũ.
+- Gate 0 **đạt cho các nhánh spike đã chạy**. Đây không phải AC sản phẩm hay bằng chứng mọi browser; Blob chưa được tải/mở bằng ứng dụng ngoài. Browser version/UA, quota/schema/đa tab, giới hạn bộ nhớ và thiết bị khác chưa được kiểm tra.
+
+## 11. Phase 1 — Day 4 (07/10/2026)
+
+- Dựng route shell `/`, `/editor`, `/privacy` trong `src/App.tsx`; dùng token và responsive layout trong `src/app.css`. Home sáng và Editor tối theo lựa chọn đã duyệt; tablet có drawer thuộc tính, mobile có rail cuộn và panel gọn.
+- Empty state là mặc định. Có thể xem loading/lỗi bằng `?preview=loading` hoặc `?preview=error` trong dev; bản production bỏ qua query preview. Chọn ảnh, undo/redo, tool và export vẫn disabled vì chưa thuộc Day 4.
+- Dialog trợ giúp dùng `<dialog>.showModal()`, đóng bằng Escape và focus quay lại nút gọi. Privacy route nêu rõ app shell hiện chưa nhận/lưu ảnh; định hướng tương lai được đánh dấu riêng.
+- `npm.cmd run build` pass (bao gồm typecheck). Route và bố cục được kiểm trong browser ở 360 px, 820 px và 1366 px; đã sửa overflow ngang ở Editor 360 px. Chưa có test framework hoặc test sản phẩm.
+- Server fallback khi deploy production chưa được cấu hình/kiểm chứng; Vite local mở trực tiếp ba route. Tiếp theo là Day 5 canvas lifecycle, không coi shell này là Gate 1.
