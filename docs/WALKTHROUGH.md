@@ -15,7 +15,7 @@ Tài liệu mô tả công việc tài liệu đã thực hiện và cách đọ
 | [CONTEXT_SUMMARY.md](CONTEXT_SUMMARY.md) | Bối cảnh ngắn để tiếp tục task, hiện trạng và các quyết định còn mở |
 | `WALKTHROUGH.md` | Giải thích đầu ra, quá trình và ranh giới bằng chứng |
 
-Sau Day 1, repository có app shell React/Vite và toolchain TypeScript tối thiểu. Chưa có editor engine, màn hình chỉnh ảnh hay chức năng import/export/draft.
+Sau Day 2, repository vẫn có app shell React/Vite tối thiểu, không có màn hình chỉnh ảnh hay luồng import/export/draft sản phẩm. Có một helper decode spike và manual harness cô lập để chọn API import.
 
 ## 2. Công việc trước task hiện tại — bằng chứng lịch sử
 
@@ -96,7 +96,7 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 
 ## 7. Hạng mục tiếp theo
 
-Day 1 của Phase 0 đã ghi quyết định tại `docs/DECISION_LOG.md` và tạo toolchain tối thiểu. Bước kế tiếp là Day 2: kiểm chứng import/decode và source lifecycle trên fixtures thật; chưa mở rộng tính năng trước Gate 0.
+Day 1 ghi quyết định/toolchain; Day 2 đã kiểm chứng decode và source lifecycle trên fixtures thật. Bước kế tiếp là Day 3: crop/resize/rotate, snapshot/proxy, export và IndexedDB roundtrip; Gate 0 vẫn chưa đạt.
 
 Khi ứng dụng có implementation, bổ sung walkthrough bằng thao tác thật, tệp bị tác động, lệnh đã chạy, browser/thiết bị, output và AC tương ứng. Ghi rõ lỗi/chưa chạy; không thay phần lịch sử bằng tuyên bố đã đạt.
 
@@ -107,3 +107,10 @@ Khi ứng dụng có implementation, bổ sung walkthrough bằng thao tác th�
 - Khởi tạo `package.json`, lockfile, `.nvmrc`, Vite/TypeScript config và React shell. Đây chỉ là scaffold; chưa có chỉnh ảnh.
 - Kiểm tra: `npm.cmd run typecheck` và `npm.cmd run build` pass trên Node 24.19.0/npm 11.17.0. Không chạy test hoặc dev server.
 - Gate 0/AC: chưa đạt/chưa chạy; Day 2–3 cần kiểm tra fixture, export file và IndexedDB roundtrip.
+
+## 9. Phase 0 — Day 2 (07/10/2026)
+
+- Tạo `src/features/editor/engine/imageImport.ts` làm helper ứng viên decode, `tests/manual/day2-import.html` + `.ts` làm harness thủ công, và fixture tại `tests/fixtures/day2-import/`. WebP dùng ảnh “A Wild Cherry” của Benjamin Gimmel từ [Google WebP Gallery](https://developers.google.com/speed/webp/gallery1), license CC BY-SA 3.0; synthetic JPEG/PNG/error fixtures có mô tả trong README cùng thư mục.
+- Trong Codex In-app Browser trên localhost, cả `FabricImage.fromURL(blob URL, { signal })` và `createImageBitmap` → canvas → FabricImage pass bộ JPEG EXIF 1–8 (kích thước và bốn vùng màu), PNG alpha 0/128/255, WebP tĩnh 1024×772. Hash source trước/sau không đổi. Corrupt JPEG bị từ chối và candidate trước vẫn dùng được. Fabric path hủy được và 13/13 Blob URL được revoke đúng một lần. ImageBitmap path pass nội dung nhưng không thể dừng decode đang chạy.
+- `npm.cmd run typecheck` pass; `npm.cmd run build` pass. Không thêm dependency, test framework hoặc UI sản phẩm. Browser version/UA không được xác minh; kiểm tra này chưa bao quát browser khác, animation, giới hạn file, ICC/profile, mobile, geometry, export sản phẩm hoặc IndexedDB.
+- Day 2 có bằng chứng decode spike, không đánh dấu AC sản phẩm hay Gate 0 đạt. Quyết định và các giới hạn được ghi trong `docs/DECISION_LOG.md`; roadmap chuyển bước tiếp theo sang Day 3.

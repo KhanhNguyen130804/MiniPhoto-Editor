@@ -42,3 +42,11 @@ Versions checked 07/10/2026: [Node.js downloads](https://nodejs.org/en/download/
 4. Source Blob + snapshot roundtrip qua IndexedDB; restore đúng và lỗi không làm mất document cũ.
 
 Gate 0 chỉ đạt khi các tiêu chí có bằng chứng bằng file thật. Day 1 mới ghi phạm vi/quyết định và dựng toolchain; chưa chạy spike hoặc đánh dấu AC nào đạt.
+
+## Kết quả spike — Phase 0, Day 2 (07/10/2026)
+
+- Thêm helper ứng viên import tại `src/features/editor/engine/imageImport.ts` và harness thủ công tại `tests/manual/day2-import.html`; đây là spike cô lập, chưa được gọi bởi app shell và chưa phải luồng import sản phẩm.
+- Trong Codex In-app Browser, cả `FabricImage.fromURL(blobUrl, { signal })` và `createImageBitmap(file, { imageOrientation: 'from-image' })` → `HTMLCanvasElement` → `FabricImage` đều decode đúng 8 fixture JPEG EXIF (dimensions và bốn vùng màu), PNG alpha 0/128/255 và WebP tĩnh 1024×772. Source bytes hash không đổi; JPEG lỗi bị từ chối; candidate trước vẫn đọc được sau lỗi; dispose lặp không gây lỗi.
+- Đường Fabric blob URL được chọn làm mặc định cho bước tích hợp sau: hỗ trợ AbortSignal trong khi load và đã kiểm tra 13 URL được revoke đúng một lần, gồm thành công, lỗi và hủy. Fallback ImageBitmap cũng pass nhưng `createImageBitmap` không nhận AbortSignal; hủy giữa lúc decode chỉ có thể bỏ kết quả và đóng bitmap sau khi hoàn tất.
+- Phiên bản/UA cụ thể của Codex In-app Browser không đọc được trong phiên này; không suy kết quả thành tương thích mọi browser. Chưa kiểm giới hạn kích thước, animation, màu/ICC, hiệu năng hoặc thiết bị mobile.
+- Typecheck và build pass; harness kiểm tra thủ công trên localhost. Không thêm dependency. Kết quả chỉ đạt tiêu chí decode Day 2; không chứng minh geometry/export/IndexedDB của Gate 0 và không đánh dấu AC sản phẩm đạt.
