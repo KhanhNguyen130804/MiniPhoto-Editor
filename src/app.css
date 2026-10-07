@@ -317,6 +317,11 @@ button:disabled {
   background: #f8fbff;
 }
 
+.import-dropzone--active {
+  border-color: var(--accent);
+  background: #eff6ff;
+}
+
 .import-empty,
 .import-state {
   display: flex;
@@ -356,6 +361,16 @@ button:disabled {
   margin: 8px 0 13px;
   color: #94a3b8;
   font-size: 12px;
+}
+
+.import-current-name {
+  max-width: 100%;
+  overflow: hidden;
+  margin-top: 5px;
+  color: #64748b;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .button {
@@ -507,7 +522,8 @@ button:disabled {
   margin-left: 4px;
 }
 
-.help-dialog {
+.help-dialog,
+.replace-dialog {
   width: min(460px, calc(100% - 32px));
   max-width: 460px;
   padding: 28px;
@@ -518,9 +534,37 @@ button:disabled {
   box-shadow: 0 28px 90px rgb(15 23 42 / 24%);
 }
 
-.help-dialog::backdrop {
+.help-dialog::backdrop,
+.replace-dialog::backdrop {
   background: rgb(15 23 42 / 58%);
   backdrop-filter: blur(3px);
+}
+
+.replace-dialog h2 {
+  margin: 12px 0 10px;
+  font-size: 24px;
+  letter-spacing: -0.04em;
+}
+
+.replace-dialog > p:not(.eyebrow) {
+  margin: 0;
+  color: #475569;
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.replace-dialog__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.replace-dialog__actions .button-secondary {
+  border-color: #cbd5e1;
+  color: #1e293b;
 }
 
 .dialog-close-row {
@@ -822,6 +866,28 @@ button:disabled {
   position: absolute !important;
   top: 0;
   left: 0;
+}
+
+.canvas-feedback {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: 12px;
+  max-width: min(520px, calc(100% - 24px));
+  padding: 10px 14px;
+  border: 1px solid #475569;
+  border-radius: 10px;
+  background: #1f2937;
+  color: #f8fafc;
+  font-size: 13px;
+  line-height: 1.5;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 20%);
+}
+
+.canvas-feedback--error {
+  border-color: #b91c1c;
+  background: #7f1d1d;
+  color: #fff1f2;
 }
 
 .canvas-message {
@@ -1267,7 +1333,8 @@ button:disabled {
 
   .editor-topbar__actions {
     width: 100%;
-    justify-content: space-between;
+    flex-wrap: wrap;
+    justify-content: flex-start;
     gap: 4px;
   }
 

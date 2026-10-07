@@ -1,10 +1,12 @@
-import { Canvas } from 'fabric';
+import { Canvas, FabricImage } from 'fabric';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 
 type Size = { width: number; height: number };
 
 type EditorCanvasProps = {
   documentSize: Size | null;
+  image: FabricImage | null;
+  detachImageRef: { current: ((image: FabricImage) => void) | null };
   children: ReactNode;
 };
 
@@ -43,10 +45,12 @@ function fitZoom(documentSize: Size, viewportSize: Size) {
   return Math.min(viewportSize.width / documentSize.width, viewportSize.height / documentSize.height, MAX_ZOOM);
 }
 
-export default function EditorCanvas({ documentSize, children }: EditorCanvasProps) {
+export default function EditorCanvas({ documentSize, image, detachImageRef, children }: EditorCanvasProps) {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<Canvas | null>(null);
   const documentSizeRef = useRef(documentSize);
+  const imageRef = useRef(image);
+  const attachedImageRef = useRef<FabricImage | null>(null);
   const viewportSizeRef = useRef<Size>({ width: 0, height: 0 });
   const disposeQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [viewportSize, setViewportSize] = useState<Size>({ width: 0, height: 0 });
@@ -54,10 +58,50 @@ export default function EditorCanvas({ documentSize, children }: EditorCanvasPro
   const [canvasError, setCanvasError] = useState(false);
 
   documentSizeRef.current = documentSize;
+  imageRef.current = image;
+
+  const detachImage = (target: FabricImage) => {
+    const canvas = canvasRef.current;
+    if (canvas && attachedImageRef.current === target) {
+      canvas.remove(target);
+      attachedImageRef.current = null;
+      canvas.requestRenderAll();
+    }
+  };
+
+  const syncImage = (canvas: Canvas) => {
+    const current = attachedImageRef.current;
+    const next = imageRef.current;
+    if (current && current !== next) {
+      canvas.remove(current);
+      attachedImageRef.current = null;
+    }
+    if (next && attachedImageRef.current !== next) {
+      next.set({
+        left: 0,
+        top: 0,
+        originX: 'left',
+        originY: 'top',
+        selectable: false,
+        evented: false,
+        hasControls: false,
+        hasBorders: false,
+        lockMovementX: true,
+        lockMovementY: true,
+        lockRotation: true,
+        lockScalingX: true,
+        lockScalingY: true,
+      });
+      attachedImageRef.current = next;
+      canvas.add(next);
+    }
+    canvas.requestRenderAll();
+  };
 
   useEffect(() => {
+    detachImageRef.current = detachImage;
     const surface = surfaceRef.current;
-    if (!surface) return;
+    if (!surface) return () => { detachImageRef.current = null; };
 
     let active = true;
     let canvas: Canvas | undefined;
@@ -105,6 +149,7 @@ export default function EditorCanvas({ documentSize, children }: EditorCanvasPro
       canvasRef.current = canvas;
       viewportSizeRef.current = initialSize;
       setViewportSize(initialSize);
+      syncImage(canvas);
 
       const currentDocument = documentSizeRef.current;
       if (validSize(currentDocument)) {
@@ -133,13 +178,29 @@ export default function EditorCanvas({ documentSize, children }: EditorCanvasPro
       observer?.disconnect();
       const currentCanvas = canvas;
       if (currentCanvas) {
+        const attachedImage = attachedImageRef.current;
+        if (attachedImage) {
+          currentCanvas.remove(attachedImage);
+          attachedImageRef.current = null;
+        }
         if (canvasRef.current === currentCanvas) canvasRef.current = null;
         disposeQueueRef.current = disposeQueueRef.current.then(async () => {
           await currentCanvas.dispose();
         });
       }
+      detachImageRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    try {
+      syncImage(canvas);
+    } catch {
+      setCanvasError(true);
+    }
+  }, [image]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -153,7 +214,7 @@ export default function EditorCanvas({ documentSize, children }: EditorCanvasPro
     const nextZoom = fitZoom(documentSize, viewport);
     centerDocument(canvas, documentSize, viewport, nextZoom);
     setZoom(nextZoom);
-  }, [documentSize?.width, documentSize?.height]);
+  }, [documentSize?.width, documentSize?.height, image]);
 
   const canControlViewport = !canvasError
     && validSize(documentSize)

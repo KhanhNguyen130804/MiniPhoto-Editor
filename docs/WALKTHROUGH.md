@@ -2,7 +2,7 @@
 
 Ngày ghi nhận: **07/10/2026**, Asia/Saigon.
 
-Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4 và phần lifecycle/viewport canvas Day 5; chưa có luồng import hoặc chỉnh sửa ảnh sản phẩm. Walkthrough phân biệt shell, spike cô lập, implementation và hành vi đã kiểm chứng.
+Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4, canvas lifecycle/viewport Day 5 và luồng import ảnh Day 6. Các công cụ chỉnh sửa, history, export và lưu nháp sản phẩm chưa triển khai. Walkthrough phân biệt shell, spike cô lập, implementation và hành vi đã kiểm chứng.
 
 ## 1. Kết quả hiện có
 
@@ -15,7 +15,7 @@ Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai
 | [CONTEXT_SUMMARY.md](CONTEXT_SUMMARY.md) | Bối cảnh ngắn để tiếp tục task, hiện trạng và các quyết định còn mở |
 | `WALKTHROUGH.md` | Giải thích đầu ra, quá trình và ranh giới bằng chứng |
 
-Sau Day 5, repository có các màn hình shell và Fabric Canvas rỗng được gắn vào Editor. Helper và harness Day 2–3 vẫn tách khỏi app; chưa có document ảnh để điều khiển hoặc xuất.
+Sau Day 6, Home và Editor dùng chung luồng chọn ảnh; dropzone Home nhận một file. Candidate hợp lệ được giải mã vào Fabric Canvas, fit viewport và có thể thay sau xác nhận. Harness Day 2 vẫn chứa kiểm tra decoder/validation thủ công. History, công cụ chỉnh sửa, export và persistence chưa có trong app.
 
 ## 2. Công việc trước task hiện tại — bằng chứng lịch sử
 
@@ -59,13 +59,13 @@ Trước commit đã đối chiếu remote `main` ở SHA `9675f2b3cc8052730a1a7
 
 Tên `AGENT.md` là tên người dùng yêu cầu; tài liệu này không xác nhận công cụ tự động nạp nó. Khi giao task, yêu cầu agent đọc tệp cùng PRD và context.
 
-## 5. Luồng sản phẩm dự kiến — chưa triển khai
+## 5. Luồng sản phẩm
 
-### Nhập ảnh và chỉnh sửa
+### Nhập ảnh — Day 6 đã implementation
 
-Home → chọn/kéo thả một JPG/PNG/WebP tĩnh → validate file/decode → tạo source asset bất biến và document baseline → mở Editor → thao tác geometry, màu, text hoặc shapes → commit snapshot → cập nhật history và đánh dấu draft cần lưu.
+Home → chọn hoặc thả đúng một JPG/PNG/WebP tĩnh → kiểm tra size/header/MIME/dimensions/animation → decode theo EXIF orientation → tạo candidate trong RAM → mở Editor và Fit viewport. Khi thay ảnh, app decode ứng viên trước; xác nhận mới thay candidate hiện tại. Lỗi hoặc hủy giữ ảnh đang mở. Direct `/editor` khi không có candidate trong phiên trả về Home; back/forward trong cùng phiên giữ candidate.
 
-Điểm kiểm chứng khi có implementation: file lỗi/hủy không thay document; geometry giữ toàn scene; adjust không đổi overlay; undo phục hồi snapshot; zoom không đổi output dimensions. Tham chiếu PRD mục 11–21.
+Đã kiểm thủ công xác nhận/hủy thay ảnh, lỗi giữ ảnh cũ, Fit/zoom cùng kích thước và back/forward. Người dùng xác nhận UI chỉ tải lên một ảnh; không ghi nhận kênh/thao tác/browser, nên chưa tính là kiểm tra thả nhiều file. Hủy picker chưa xác minh. Geometry, adjust, history, draft và export vẫn chưa implementation.
 
 ### Autosave và restore
 
@@ -96,9 +96,9 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 
 ## 7. Hiện trạng và bước tiếp theo
 
-**Hiện trạng:** Gate 0 được đánh giá lại bằng manual harness mở rộng; Day 4 app shell có các route `/`, `/editor`, `/privacy`, responsive layout, states và dialog native. Day 5 đã nối Fabric Canvas lifecycle, resize và viewport controls; build và spot-check StrictMode/resize pass, còn Fit/zoom trên document chưa xác minh. Chi tiết ở mục 12 và [Decision Log](DECISION_LOG.md).
+**Hiện trạng:** Gate 0 đạt trong phạm vi harness; Day 4 app shell có route `/`, `/editor`, `/privacy`; Day 5 nối Fabric Canvas lifecycle/viewport; Day 6 import đã implementation và kiểm một phần. Người dùng xác nhận UI chỉ tải một ảnh, nhưng hủy picker chưa xác minh và chưa coi là kiểm tra thả nhiều file; AC-03 có bằng chứng một phần. Gate 1 chưa đạt. Chi tiết ở mục 12, 14 và [Decision Log](DECISION_LOG.md).
 
-**Bước kế tiếp theo roadmap:** triển khai Day 6 import. Rà soát hiện trạng ở mục 13 xác nhận Day 6 chưa hoàn thành; Day 5 acceptance cần runtime kiểm tra trên document fixture. Gate 1 chưa đạt, import, history, rotate/flip và export sản phẩm chưa được triển khai.
+**Bước kế tiếp theo roadmap:** Day 7 baseline/history sau khi bổ sung spot-check AC-03. Gate 1 còn phụ thuộc history, rotate/flip và PNG/JPG export.
 
 ## 8. Phase 0 — Day 1 (07/10/2026)
 
@@ -134,13 +134,23 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 
 - Thêm `src/features/editor/EditorCanvas.tsx` để tạo một Fabric `Canvas` cho mỗi component mount. Canvas instance ở ref; React StrictMode cleanup/replay được xử lý bằng hàng đợi chờ `dispose()` trước khi khởi tạo lại.
 - ResizeObserver cập nhật kích thước vùng render; cleanup disconnect observer và gọi `dispose()` để Fabric gỡ canvas/listener. Khi document có kích thước hợp lệ, resize giữ zoom hiện tại và căn giữa; Fit tính tỷ lệ vừa khung, zoom giới hạn 10–400% còn Fit có thể thấp hơn 10%.
-- `src/App.tsx` chuyển Editor sang component này; `.canvas-stage` giữ checkerboard/empty state. Vì import thuộc Day 6, `documentSize` hiện là `null`, kích thước hiển thị là placeholder và Fit/zoom vẫn disabled.
+- `src/App.tsx` chuyển Editor sang component này; tại checkpoint Day 5, `.canvas-stage` có checkerboard/empty state và `documentSize` là `null`. Day 6 sau đó cấp image/dimensions cho Canvas.
 - `npm.cmd run build` pass, gồm `tsc --noEmit` và `vite build`; Vite cảnh báo bundle JavaScript vượt 500 kB sau minify. Không thêm dependency hoặc test runner.
 - Trong Codex In-app Browser tại `/editor`, StrictMode để lại một `.canvas-container` với hai canvas nội bộ và không hiện runtime error; viewport 360×800 cập nhật surface/wrapper về 339 px. Browser version không xác minh. Fit/zoom chưa kiểm tra trên document vì chưa có import; Day 5 acceptance và Gate 1 chưa đạt đầy đủ.
 
-## 13. Phase 1 — Day 6 status review (07/10/2026)
+## 13. Phase 1 — Day 6 status review trước implementation (07/10/2026)
 
-- **Kết luận: chưa hoàn thành.** `src/App.tsx` vẫn render nút “Chọn ảnh” disabled; chưa có file input hoặc handler kéo/thả. Editor nhận `documentSize={null}`, nên chưa có document ảnh để fit/zoom.
+- Đây là snapshot khảo sát trước khi bắt đầu implementation Day 6; không phản ánh trạng thái hiện tại.
+- Tại snapshot này, `src/App.tsx` render nút “Chọn ảnh” disabled; chưa có file input hoặc handler kéo/thả; Editor nhận `documentSize={null}`.
 - `src/features/editor/engine/imageImport.ts` chỉ có hai decoder helper; `tests/manual/day2-import.html` và `.ts` là harness spike Day 2, không được gọi từ luồng app.
-- Chưa thấy luồng sản phẩm kiểm tra một file, kích thước byte, MIME/header, dimensions/animation, decode, hủy picker hoặc xác nhận thay ảnh. Do đó AC-01–03 chưa có bằng chứng đạt; harness Day 2 không thay thế nghiệm thu này.
-- Đây là rà soát tĩnh theo source và tài liệu; không chạy build/test/app trong lần kiểm tra Day 6 này.
+- AC-01–03 khi đó chưa có bằng chứng ở luồng sản phẩm; harness Day 2 không thay thế nghiệm thu này.
+
+## 14. Phase 1 — Day 6 implementation và kiểm chứng (07/10/2026)
+
+- `src/features/editor/engine/imageImport.ts` nhận dạng JPEG/PNG/WebP từ header, kiểm tra file rỗng và giới hạn 20 MiB, MIME được khai báo nếu xung đột, dimensions 1×1 đến 12 MP/cạnh 8192, APNG và animation WebP. Sau validation, `decodeWithFabricUrl` tạo candidate; kích thước sau decode được kiểm tra lại để chặn mismatch header/decode.
+- `src/App.tsx` dùng một hidden input cho Home và Editor. Home hỗ trợ thả file; nhiều file được báo lỗi, không chọn file đầu. Khi có candidate, thay ảnh mở native dialog sau khi ảnh mới decode xong. Cancel hoặc lỗi giữ ảnh hiện tại; accept mới đổi active candidate. Hủy file picker không tạo lỗi vì app không nhận `change` khi không có file.
+- `EditorCanvas` gắn candidate image như ảnh nền không chọn được, giữ alpha trên nền checkerboard và chạy Fit khi đổi candidate, cả khi kích thước không đổi. Canvas tháo image trước khi dispose Fabric để app có thể giữ candidate khi điều hướng về Home. Route dùng History API trong phiên; direct `/editor` không có candidate thay URL về `/`.
+- `tests/manual/day2-import.ts` bổ sung assert cases cho JPEG/PNG/static WebP headers; file rỗng/quá lớn/MIME mismatch/header sai; 12 MP/8192 px boundary; APNG và animated WebP. Test header giới hạn/animation dùng dữ liệu tổng hợp, không có fixture động thật.
+- `npm.cmd run typecheck` pass. `npm.cmd run build` pass; Vite ghi cảnh báo bundle JS 525.21 kB vượt 500 kB. Manual harness trên Codex In-app Browser pass các assert mới và các fixture cũ: JPEG EXIF 1–8, alpha PNG, WebP tĩnh, corrupt, abort và 13/13 Blob URLs revoke đúng một lần.
+- Trong app localhost, JPEG EXIF 6 hiển thị 48×64 px; thay ảnh qua dialog được thử hủy và xác nhận; WebP 1024×772 Fit 69%, zoom 83%, thay bằng ảnh cùng kích thước trở về Fit 69%; corrupt replacement báo lỗi và vẫn giữ WebP cũ. Refresh `/editor` khi mất candidate về Home; back/forward trong cùng phiên vẫn giữ candidate. Canvas có một `.canvas-container` sau các lần thay ảnh.
+- Người dùng xác nhận UI chỉ tải lên một ảnh; kênh/thao tác/browser không được ghi nhận, vì vậy chưa tính là kiểm tra thả nhiều file. Hủy picker, mobile viewport, screen reader, browser khác và network audit chưa kiểm; browser version không xác minh. AC-03 có bằng chứng UI một phần; Gate 1 chưa đạt do history/rotate/flip/export cũng chưa triển khai.

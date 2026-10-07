@@ -1,6 +1,11 @@
 import {
   decodeWithFabricUrl,
   decodeWithImageBitmap,
+  ImageImportError,
+  MAX_IMAGE_EDGE,
+  MAX_IMAGE_PIXELS,
+  MAX_IMPORT_FILE_BYTES,
+  validateImageFile,
   type ImageImportCandidate,
 } from '../../src/features/editor/engine/imageImport';
 
@@ -91,9 +96,123 @@ async function expectFailure(action: () => Promise<unknown>, label: string): Pro
   assert(rejected, `${label} should reject.`);
 }
 
+function uint32BE(value: number): Uint8Array {
+  return new Uint8Array([value >>> 24, value >>> 16, value >>> 8, value]);
+}
+
+function concatBytes(parts: Uint8Array[]): Uint8Array {
+  const bytes = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) {
+    bytes.set(part, offset);
+    offset += part.length;
+  }
+  return bytes;
+}
+
+function pngChunk(type: string, data: Uint8Array): Uint8Array {
+  return new Uint8Array([
+    ...uint32BE(data.length),
+    ...new TextEncoder().encode(type),
+    ...data,
+    0, 0, 0, 0,
+  ]);
+}
+
+function syntheticPng(width: number, height: number, animated = false): File {
+  const ihdr = new Uint8Array(13);
+  ihdr.set(uint32BE(width), 0);
+  ihdr.set(uint32BE(height), 4);
+  ihdr.set([8, 6, 0, 0, 0], 8);
+  const chunks = [pngChunk('IHDR', ihdr)];
+  if (animated) chunks.push(pngChunk('acTL', new Uint8Array(8)));
+  chunks.push(pngChunk('IEND', new Uint8Array()));
+  const bytes = concatBytes([
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    ...chunks,
+  ]);
+  return new File([bytes.slice().buffer as ArrayBuffer], 'synthetic.png', { type: 'image/png' });
+}
+
+function webpChunk(type: string, data: Uint8Array): Uint8Array {
+  const length = data.length;
+  return new Uint8Array([
+    ...new TextEncoder().encode(type),
+    length, length >>> 8, length >>> 16, length >>> 24,
+    ...data,
+    ...(length % 2 ? [0] : []),
+  ]);
+}
+
+function syntheticAnimatedWebp(): File {
+  const extended = new Uint8Array(10);
+  extended[0] = 0x02;
+  extended.set([0, 0, 0], 4);
+  extended.set([0, 0, 0], 7);
+  const chunks = [webpChunk('VP8X', extended), webpChunk('ANMF', new Uint8Array())];
+  const riffSize = 4 + chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+  const bytes = concatBytes([
+    new TextEncoder().encode('RIFF'),
+    new Uint8Array([riffSize, riffSize >>> 8, riffSize >>> 16, riffSize >>> 24]),
+    new TextEncoder().encode('WEBP'),
+    ...chunks,
+  ]);
+  return new File([bytes.slice().buffer as ArrayBuffer], 'synthetic.webp', { type: 'image/webp' });
+}
+
+async function expectImportCode(action: () => Promise<unknown>, code: ImageImportError['code'], label: string): Promise<void> {
+  try {
+    await action();
+  } catch (error) {
+    assert(error instanceof ImageImportError && error.code === code,
+      `${label}: expected ${code}, got ${error instanceof ImageImportError ? error.code : String(error)}.`);
+    return;
+  }
+  throw new Error(`${label}: expected ${code}.`);
+}
+
+async function verifyValidation(): Promise<string[]> {
+  const lines: string[] = [];
+  const jpeg = await fixture('jpeg-orientation-1.jpg');
+  const png = await fixture('png-alpha.png');
+  const webp = await fixture('webp-static.webp');
+  const jpegMetadata = await validateImageFile(new File([await jpeg.arrayBuffer()], 'renamed.txt', { type: '' }));
+  const pngMetadata = await validateImageFile(png);
+  const webpMetadata = await validateImageFile(webp);
+  assert(jpegMetadata.mimeType === 'image/jpeg' && pngMetadata.mimeType === 'image/png'
+    && webpMetadata.mimeType === 'image/webp', 'Header detection failed for a supported format.');
+  lines.push('PASS header detection: JPEG/PNG/static WebP; blank MIME and extension ignored');
+
+  await expectImportCode(() => validateImageFile(new File([], 'empty.png')), 'EMPTY_FILE', 'Empty file');
+  const oversized = {
+    size: MAX_IMPORT_FILE_BYTES + 1,
+    type: 'image/png',
+    arrayBuffer: async () => new ArrayBuffer(0),
+  } as File;
+  await expectImportCode(() => validateImageFile(oversized), 'FILE_TOO_LARGE', 'Oversized file');
+  const mismatchedMime = new File([await jpeg.arrayBuffer()], 'wrong-mime.png', { type: 'image/png' });
+  await expectImportCode(() => validateImageFile(mismatchedMime), 'UNSUPPORTED_FORMAT', 'Mismatched MIME');
+  await expectImportCode(() => validateImageFile(new File([new Uint8Array([1, 2, 3])], 'bad.png')),
+    'UNSUPPORTED_FORMAT', 'Bad header');
+  lines.push('PASS empty/oversize/mismatched MIME/bad header rejected');
+
+  const atPixelLimit = await validateImageFile(syntheticPng(4000, 3000));
+  const atEdgeLimit = await validateImageFile(syntheticPng(MAX_IMAGE_EDGE, 1));
+  assert(atPixelLimit.width * atPixelLimit.height === MAX_IMAGE_PIXELS && atEdgeLimit.width === MAX_IMAGE_EDGE,
+    'Inclusive image dimensions were rejected.');
+  await expectImportCode(() => validateImageFile(syntheticPng(4001, 3000)), 'IMAGE_TOO_LARGE', 'Pixel limit');
+  await expectImportCode(() => validateImageFile(syntheticPng(MAX_IMAGE_EDGE + 1, 1)), 'IMAGE_TOO_LARGE', 'Edge limit');
+  lines.push('PASS dimensions: 12 MP and 8192 px accepted; larger inputs rejected');
+
+  await expectImportCode(() => validateImageFile(syntheticPng(1, 1, true)), 'ANIMATED_IMAGE', 'APNG');
+  await expectImportCode(() => validateImageFile(syntheticAnimatedWebp()), 'ANIMATED_IMAGE', 'Animated WebP');
+  lines.push('PASS APNG and animated WebP rejected');
+  return lines;
+}
+
 async function run(): Promise<void> {
   const decode = decoder.value === 'fabric' ? decodeWithFabricUrl : decodeWithImageBitmap;
-  const lines: string[] = [];
+  const lines = await verifyValidation();
   const objectUrls = new Map<string, number>();
   const createDescriptor = Object.getOwnPropertyDescriptor(URL, 'createObjectURL')!;
   const revokeDescriptor = Object.getOwnPropertyDescriptor(URL, 'revokeObjectURL')!;
