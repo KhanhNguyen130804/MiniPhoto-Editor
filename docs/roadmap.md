@@ -8,14 +8,14 @@
 - **Nhịp làm việc giả định:** một developer đã biết React/TypeScript, làm 5 ngày mỗi tuần; chưa có deadline được xác nhận.
 - **Dự phòng:** giữ thêm 15–25% thời lượng ngoài 30 ngày cơ sở nếu spike engine, bộ nhớ, mobile hoặc trình duyệt phát sinh vấn đề.
 - **Phạm vi:** P0 của PRD; không thêm backend, cloud sync, tài khoản, AI, analytics hoặc tính năng P1.
-- **Quyết định cần chốt trước khi cam kết:** D07–D11 (stack, giới hạn, theme, trải nghiệm mobile, analytics) vẫn là đề xuất/giả định trong PRD; D12 (mục đích, đội ngũ, deadline, kỹ năng) còn mở. Ngày 1 ghi nhận các quyết định được duyệt; phần chưa chốt phải được đánh dấu là giả định, không tự coi là đã xác nhận.
+- **Quyết định:** Day 1 chọn D07 theo stack đề xuất của PRD. D08–D11 vẫn là đề xuất/giả định; các giới hạn cần đo ở spike, D12 (mục đích, đội ngũ, deadline, kỹ năng) còn mở. Không coi phần chưa chốt là đã xác nhận.
 - **Nguyên tắc triển khai:** responsive skeleton và undo/history bắt đầu từ phase nền tảng; preview dùng proxy nhưng export dùng nguồn đủ độ phân giải; chỉ qua gate khi có bằng chứng phù hợp từ fixture/file thật.
 
 ## Lịch 30 ngày công
 
 | Ngày | Phase | Công việc | Đầu ra / điều kiện kết thúc |
 |---:|---|---|---|
-| 1 | 0 — Spike | Chốt phạm vi P0, quyết định stack và môi trường tối thiểu; ghi lại các quyết định còn mở, giới hạn đề xuất và tiêu chí spike. | Decision log ngắn; project/toolchain tối thiểu được khởi tạo sau khi stack được duyệt; không mở rộng sang backend/AI. |
+| 1 | 0 — Spike | Chốt phạm vi P0, quyết định stack và môi trường tối thiểu; ghi lại các quyết định còn mở, giới hạn đề xuất và tiêu chí spike. | **Hoàn thành 07/10/2026:** `docs/DECISION_LOG.md`, React/Vite/TypeScript shell, Node 24 LTS/npm lockfile; typecheck/build pass. Chưa có editor feature; Gate 0 chưa đạt. Không mở rộng sang backend/AI. |
 | 2 | 0 — Spike | Thử engine với JPEG, PNG alpha, WebP tĩnh, EXIF orientation và nguồn ảnh bất biến; kiểm tra decode và cleanup tài nguyên. | Fixture import/decode chạy được; ghi rõ browser/API fallback và vấn đề chưa giải quyết. |
 | 3 | 0 — Spike | Prototype crop → resize → rotate có text; chuẩn hóa snapshot từ preview/proxy, export từ nguồn đầy đủ; roundtrip source Blob và snapshot qua IndexedDB. | Tệp export mở được, đúng pixel/kích thước và overlay; draft roundtrip đọc lại được. **Gate 0:** xác nhận engine/đường dữ liệu đủ tin cậy hoặc dừng để đổi hướng/ước lượng. |
 | 4 | 1 — Nền tảng | Tạo app shell, route Home/Editor/Privacy, token và bố cục desktop/tablet/mobile; dựng empty/loading/error states và dialog accessible nền tảng. | Các route mở được; responsive skeleton không làm canvas mất vùng làm việc; trạng thái chính có cấu trúc hiển thị. |
@@ -59,4 +59,4 @@ Nếu một gate thất bại, dừng phần phụ thuộc, ghi nguyên nhân v�
 
 ## Ranh giới bằng chứng
 
-Roadmap này là kế hoạch. Mỗi ngày chỉ được đánh dấu hoàn thành khi có đầu ra và bằng chứng tương ứng. Build pass không thay kiểm tra file export; Playwright mobile emulation không thay QA trên thiết bị thật; mock quota không chứng minh quota thật. PRD hiện ghi chưa có code ứng dụng, chưa chạy test sản phẩm và chưa có AC nào đạt.
+Roadmap này là kế hoạch. Day 1 tạo app shell và build pass; điều đó không kiểm tra file export. Chưa chạy test sản phẩm, chưa có AC nào đạt và Gate 0 vẫn chưa qua. Playwright mobile emulation không thay QA trên thiết bị thật; mock quota không chứng minh quota thật. `canvas` native install script chưa được cho phép, nên Node-backed canvas chưa được kiểm chứng.

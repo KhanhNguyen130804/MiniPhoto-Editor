@@ -10,11 +10,12 @@ Tài liệu mô tả công việc tài liệu đã thực hiện và cách đọ
 |---|---|
 | [PRD_MINIPHOTO_EDITOR.md](../PRD_MINIPHOTO_EDITOR.md) | Đặc tả sản phẩm, FR, dữ liệu, kiến trúc, 42 AC và release gate |
 | [docs/roadmap.md](roadmap.md) | Kế hoạch triển khai theo từng ngày công, phase và gate |
+| [docs/DECISION_LOG.md](DECISION_LOG.md) | Quyết định stack, phạm vi MVP và tiêu chí Gate 0 cho Day 1 |
 | [AGENT.md](../AGENT.md) | Hướng dẫn làm việc, invariants, quy trình kiểm chứng/Git/bàn giao |
 | [CONTEXT_SUMMARY.md](CONTEXT_SUMMARY.md) | Bối cảnh ngắn để tiếp tục task, hiện trạng và các quyết định còn mở |
 | `WALKTHROUGH.md` | Giải thích đầu ra, quá trình và ranh giới bằng chứng |
 
-Repository đang ở giai đoạn tài liệu; chưa có source app, dependency manifest, lockfile hoặc script thực thi.
+Sau Day 1, repository có app shell React/Vite và toolchain TypeScript tối thiểu. Chưa có editor engine, màn hình chỉnh ảnh hay chức năng import/export/draft.
 
 ## 2. Công việc trước task hiện tại — bằng chứng lịch sử
 
@@ -88,13 +89,21 @@ Compare dùng render tạm theo geometry hiện tại, bỏ màu/filter và ẩn
 | Tệp có sẵn | PRD, agent, roadmap; agent và docs chưa tracked |
 | Hai tài liệu mới | Được kiểm bằng đọc lại, tồn tại tệp và tham chiếu local |
 | GitHub live khi tạo ban đầu | Không kiểm lại remote SHA/fetch; lần tổ chức/xuất bản sau có đối chiếu remote như mục 3 |
-| Build/test/runtime | Không chạy; chưa có manifest/source để xác nhận |
+| Build/test/runtime lúc tạo walkthrough | Không chạy; đây là bằng chứng lịch sử, không phải kiểm tra hiện tại |
 | AC và release gate | Chưa có evidence đạt cho sản phẩm |
 
 Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm bằng chứng runtime. Kết quả kiểm tra văn bản chỉ chứng minh đầu ra tài liệu, không chứng minh tính đúng của engine, export hoặc IndexedDB.
 
 ## 7. Hạng mục tiếp theo
 
-Chờ người dùng giao task tiếp theo. Hướng hợp lý là Phase 0/ngày 1: ghi quyết định D07–D12, phạm vi spike và tiêu chí bằng chứng; sau đó mới khởi tạo toolchain theo phạm vi được giao. Tiếp tục gate kỹ thuật ngày 2–3 trước khi mở rộng tính năng.
+Day 1 của Phase 0 đã ghi quyết định tại `docs/DECISION_LOG.md` và tạo toolchain tối thiểu. Bước kế tiếp là Day 2: kiểm chứng import/decode và source lifecycle trên fixtures thật; chưa mở rộng tính năng trước Gate 0.
 
 Khi ứng dụng có implementation, bổ sung walkthrough bằng thao tác thật, tệp bị tác động, lệnh đã chạy, browser/thiết bị, output và AC tương ứng. Ghi rõ lỗi/chưa chạy; không thay phần lịch sử bằng tuyên bố đã đạt.
+
+## 8. Phase 0 — Day 1 (07/10/2026)
+
+- Tạo nhánh `codex/phase-0-spike` trên local và GitHub; nhánh theo dõi `origin/codex/phase-0-spike`.
+- Chọn stack MVP theo đề xuất PRD: React 19.3.0, TypeScript 7.0.2 strict, Vite 8.3.3, Fabric.js 7.4.0; Node 24 LTS/npm và CSS Modules khi cần. Chi tiết cùng các quyết định còn mở ở `docs/DECISION_LOG.md`.
+- Khởi tạo `package.json`, lockfile, `.nvmrc`, Vite/TypeScript config và React shell. Đây chỉ là scaffold; chưa có chỉnh ảnh.
+- Kiểm tra: `npm.cmd run typecheck` và `npm.cmd run build` pass trên Node 24.19.0/npm 11.17.0. Không chạy test hoặc dev server.
+- Gate 0/AC: chưa đạt/chưa chạy; Day 2–3 cần kiểm tra fixture, export file và IndexedDB roundtrip.
