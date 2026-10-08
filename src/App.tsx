@@ -21,6 +21,7 @@ import {
 } from './features/editor/engine/imageImport';
 import { createImageBaselineSnapshot, type EditorSnapshot } from './features/editor/engine/snapshot';
 import { cropDocument as cropEditorDocument, transformDocument as transformEditorDocument, type GeometryCommand } from './features/editor/engine/geometry';
+import { calculateResize, type ResizeAxis, type ResizeDimensions, type ResizeError } from './features/editor/engine/resize';
 import { exportImage, type ExportFormat } from './features/editor/engine/exportImage';
 import {
   createCropRect,
@@ -36,6 +37,14 @@ type Route = 'home' | 'editor' | 'privacy' | 'not-found';
 type ImportStatus = { phase: 'idle' | 'loading' } | { phase: 'error'; message: string };
 type PendingCrop = { ratio: CropRatio; rect: CropRect };
 type CropFields = Record<keyof CropRect, string>;
+type PendingResize = {
+  base: ResizeDimensions;
+  fields: Record<ResizeAxis, string>;
+  dimensions: ResizeDimensions;
+  scale: number;
+  error: { field: ResizeAxis; code: ResizeError } | null;
+  prepared: ResizeDimensions | null;
+};
 
 const idleImportStatus: ImportStatus = { phase: 'idle' };
 
@@ -54,6 +63,17 @@ function cropValidationMessage(error: CropValidationError): string {
     case 'invalid-number': return 'X, Y, Rộng và Cao phải là số nguyên.';
     case 'outside-bounds': return 'Khung cắt phải nằm trong tài liệu và rộng/cao ít nhất 1 px.';
     case 'invalid-ratio': return 'Rộng và Cao phải giữ đúng tỷ lệ đã chọn.';
+  }
+}
+
+function resizeValidationMessage(error: ResizeError): string {
+  switch (error) {
+    case 'invalid-document': return 'Kích thước tài liệu hiện tại không hợp lệ.';
+    case 'required': return 'Trường này không được để trống.';
+    case 'integer': return 'Nhập số nguyên hữu hạn.';
+    case 'positive': return 'Kích thước phải ít nhất 1 px.';
+    case 'edge-limit': return `Mỗi cạnh phải từ 1 đến ${MAX_IMAGE_EDGE.toLocaleString('vi-VN')} px.`;
+    case 'pixel-limit': return `Tổng kích thước không được vượt ${MAX_IMAGE_PIXELS / 1_000_000} MP.`;
   }
 }
 
@@ -335,7 +355,7 @@ function EditorPage({
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
 }) {
-  const tools = ['Cắt', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'];
+  const tools = ['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'];
   const [panelOpen, setPanelOpen] = useState(false);
   const exportDialogRef = useRef<HTMLDialogElement>(null);
   const exportUrlRef = useRef<string | null>(null);
@@ -351,9 +371,10 @@ function EditorPage({
   const [cropPending, setCropPending] = useState<PendingCrop | null>(null);
   const [cropInput, setCropInput] = useState<CropFields | null>(null);
   const [cropError, setCropError] = useState('');
+  const [resizePending, setResizePending] = useState<PendingResize | null>(null);
 
   const startCrop = () => {
-    if (cropPending || exportBusy || status.phase === 'loading') return;
+    if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     const rect = createCropRect(snapshot.document, 'free');
     if (!rect) return;
     setCropPending({ ratio: 'free', rect });
@@ -365,6 +386,52 @@ function EditorPage({
     setCropPending(null);
     setCropInput(null);
     setCropError('');
+  };
+
+  const startResize = () => {
+    if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    const base = { width: snapshot.document.width, height: snapshot.document.height };
+    setResizePending({
+      base,
+      fields: { width: String(base.width), height: String(base.height) },
+      dimensions: base,
+      scale: 1,
+      error: null,
+      prepared: null,
+    });
+    setPanelOpen(true);
+  };
+
+  const cancelResize = () => setResizePending(null);
+
+  const updateResizeField = (field: ResizeAxis, value: string) => {
+    if (!resizePending) return;
+    const result = calculateResize(resizePending.base, field, value);
+    if (!result.valid) {
+      setResizePending({
+        ...resizePending,
+        fields: { ...resizePending.fields, [field]: value },
+        error: { field, code: result.error },
+        prepared: null,
+      });
+      return;
+    }
+    setResizePending({
+      ...resizePending,
+      fields: {
+        width: String(result.dimensions.width),
+        height: String(result.dimensions.height),
+      },
+      dimensions: result.dimensions,
+      scale: result.scale,
+      error: null,
+      prepared: null,
+    });
+  };
+
+  const applyResize = () => {
+    if (!resizePending || resizePending.error) return;
+    setResizePending({ ...resizePending, prepared: resizePending.dimensions });
   };
 
   const chooseCropRatio = (ratio: CropRatio) => {
@@ -431,6 +498,17 @@ function EditorPage({
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [cropPending]);
 
+  useEffect(() => {
+    if (!resizePending) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented) return;
+      event.preventDefault();
+      cancelResize();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [resizePending]);
+
   const clearDownload = () => {
     if (exportUrlRef.current) URL.revokeObjectURL(exportUrlRef.current);
     exportUrlRef.current = null;
@@ -451,7 +529,7 @@ function EditorPage({
   }, []);
 
   const generateExport = async () => {
-    if (exportBusy || cropPending) return;
+    if (exportBusy || cropPending || resizePending) return;
     clearDownload();
     setExportError('');
     setExportBusy(true);
@@ -482,6 +560,9 @@ function EditorPage({
     setExportError('');
   };
 
+  const activeTool = cropPending ? 'Cắt' : resizePending ? 'Kích thước' : null;
+  const documentActionLocked = exportBusy || Boolean(cropPending || resizePending);
+
   return (
     <div className="editor-shell">
       <header className="editor-topbar">
@@ -492,15 +573,15 @@ function EditorPage({
           <span className="document-name" title={candidate.source.name}>{candidate.source.name}</span>
         </div>
         <div className="editor-topbar__actions">
-          <button className="editor-quiet-button" type="button" onClick={onUndo} disabled={!undoEnabled || exportBusy || Boolean(cropPending)}>Hoàn tác</button>
-          <button className="editor-quiet-button" type="button" onClick={onRedo} disabled={!redoEnabled || exportBusy || Boolean(cropPending)}>Làm lại</button>
-          <button className="editor-quiet-button" type="button" onClick={onChoose} ref={replaceButtonRef} disabled={status.phase === 'loading' || exportBusy || Boolean(cropPending)}>
+          <button className="editor-quiet-button" type="button" onClick={onUndo} disabled={!undoEnabled || documentActionLocked}>Hoàn tác</button>
+          <button className="editor-quiet-button" type="button" onClick={onRedo} disabled={!redoEnabled || documentActionLocked}>Làm lại</button>
+          <button className="editor-quiet-button" type="button" onClick={onChoose} ref={replaceButtonRef} disabled={status.phase === 'loading' || documentActionLocked}>
             Thay ảnh
           </button>
           <button
             className="button button-primary editor-export"
             type="button"
-            disabled={exportBusy || Boolean(cropPending)}
+            disabled={documentActionLocked}
             onClick={() => {
               setExportError('');
               exportDialogRef.current?.showModal();
@@ -525,14 +606,16 @@ function EditorPage({
         <aside className="tool-rail" aria-label="Công cụ chỉnh sửa">
           {tools.map((tool, index) => (
             <button
-              className={`tool-item${tool === 'Cắt' && cropPending ? ' tool-item--active' : ''}`}
+              className={`tool-item${activeTool === tool ? ' tool-item--active' : ''}`}
               type="button"
               key={tool}
-              disabled={tool !== 'Cắt' || exportBusy || status.phase === 'loading'}
-              aria-pressed={tool === 'Cắt' ? Boolean(cropPending) : undefined}
-              onClick={tool === 'Cắt' ? (cropPending ? cancelCrop : startCrop) : undefined}
+              disabled={(!['Cắt', 'Kích thước'].includes(tool)) || exportBusy || status.phase === 'loading' || Boolean(activeTool && activeTool !== tool)}
+              aria-pressed={['Cắt', 'Kích thước'].includes(tool) ? activeTool === tool : undefined}
+              onClick={tool === 'Cắt'
+                ? (cropPending ? cancelCrop : startCrop)
+                : tool === 'Kích thước' ? (resizePending ? cancelResize : startResize) : undefined}
             >
-              <span className="tool-item__icon" aria-hidden="true">{['⌗', '◐', '✧', 'T', '◇'][index]}</span>
+              <span className="tool-item__icon" aria-hidden="true">{['⌗', '↔', '◐', '✧', 'T', '◇'][index]}</span>
               <span>{tool}</span>
             </button>
           ))}
@@ -544,7 +627,7 @@ function EditorPage({
             snapshot={snapshot}
             detachImageRef={detachImageRef}
             onTransform={onTransform}
-            documentActionsDisabled={exportBusy || Boolean(cropPending)}
+            documentActionsDisabled={documentActionLocked}
             crop={cropPending}
             onCropChange={updateCropRect}
           >
@@ -559,7 +642,7 @@ function EditorPage({
         >
           <div className="properties-panel__heading">
             <h2 id="properties-title">Thuộc tính</h2>
-            <span>{cropPending ? 'Cắt' : '—'}</span>
+            <span>{activeTool ?? '—'}</span>
           </div>
           {cropPending ? (
             <section className="crop-controls" aria-labelledby="crop-controls-title">
@@ -611,6 +694,52 @@ function EditorPage({
                 <button className="button button-secondary" type="button" onClick={cancelCrop}>Hủy cắt</button>
               </div>
             </section>
+          ) : resizePending ? (
+            <section className="crop-controls" aria-labelledby="resize-controls-title">
+              <div>
+                <strong id="resize-controls-title">Đổi kích thước</strong>
+                <p>Tỷ lệ đang khóa theo tài liệu khi mở công cụ. Sửa một cạnh để tự tính cạnh còn lại.</p>
+              </div>
+              <div className="crop-number-grid" aria-label="Kích thước tài liệu mới">
+                {([
+                  ['width', 'Rộng (px)'], ['height', 'Cao (px)'],
+                ] as const).map(([field, label]) => (
+                  <label className="crop-number-field" key={field}>
+                    {label}
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={resizePending.fields[field]}
+                      aria-invalid={resizePending.error?.field === field || undefined}
+                      aria-describedby={resizePending.error?.field === field ? `resize-${field}-error` : undefined}
+                      onChange={(event) => updateResizeField(field, event.currentTarget.value)}
+                    />
+                    {resizePending.error?.field === field && (
+                      <span id={`resize-${field}-error`} className="crop-validation-error" role="alert">
+                        {resizeValidationMessage(resizePending.error.code)}
+                      </span>
+                    )}
+                  </label>
+                ))}
+              </div>
+              {!resizePending.error && resizePending.scale > 1 && (
+                <p className="resize-upscale-warning" role="status">Phóng lớn không tạo thêm chi tiết ảnh.</p>
+              )}
+              {resizePending.prepared && (
+                <p className="resize-prepared" role="status" aria-live="polite">
+                  {resizePending.prepared.width === resizePending.base.width
+                    && resizePending.prepared.height === resizePending.base.height
+                    ? 'Kích thước không đổi; tài liệu và lịch sử được giữ nguyên.'
+                    : `Đã chuẩn bị ${resizePending.prepared.width} × ${resizePending.prepared.height} px. Canvas, tài liệu và lịch sử chưa thay đổi; áp dụng resize sẽ nối ở Day 12.`}
+                </p>
+              )}
+              <div className="crop-actions">
+                <button className="button button-primary" type="button" onClick={applyResize} disabled={Boolean(resizePending.error)}>
+                  Áp dụng
+                </button>
+                <button className="button button-secondary" type="button" onClick={cancelResize}>Hủy resize</button>
+              </div>
+            </section>
           ) : (
             <div className="properties-empty">
               <span className="properties-empty__icon" aria-hidden="true">◇</span>
@@ -620,7 +749,10 @@ function EditorPage({
           )}
           <div className="properties-note">
             <span className="properties-note__dot" aria-hidden="true" />
-            <p>{cropPending ? 'Khung cắt chỉ tồn tại trong phiên đang mở và không làm thay đổi lịch sử.' : 'Ảnh gốc và các bước chỉnh sửa sẽ được quản lý riêng biệt.'}</p>
+            <p>{cropPending
+              ? 'Khung cắt chỉ tồn tại trong phiên đang mở và không làm thay đổi lịch sử.'
+              : resizePending ? 'Kích thước chỉ được ghi nhận tạm; tài liệu và lịch sử chưa đổi.'
+                : 'Ảnh gốc và các bước chỉnh sửa sẽ được quản lý riêng biệt.'}</p>
           </div>
         </aside>
       </div>

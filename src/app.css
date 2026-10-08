@@ -1347,6 +1347,20 @@ button:disabled {
 .crop-controls .crop-validation-error {
   margin: -6px 0 0;
   color: #fca5a5;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.crop-controls .resize-upscale-warning {
+  color: #fcd34d;
+}
+
+.crop-controls .resize-prepared {
+  padding: 9px 10px;
+  border: 1px solid #36506f;
+  border-radius: 8px;
+  background: #1e3148;
+  color: #bfdbfe;
 }
 
 .crop-actions {
