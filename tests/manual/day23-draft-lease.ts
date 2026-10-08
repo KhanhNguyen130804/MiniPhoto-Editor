@@ -14,19 +14,22 @@ import {
 import { decodeWithFabricUrl } from '../../src/features/editor/engine/imageImport';
 import type { ImageImportCandidate } from '../../src/features/editor/engine/imageImport';
 import { createImageBaselineSnapshot } from '../../src/features/editor/engine/snapshot';
+import { createUuid } from '../../src/features/editor/engine/uuid';
 
 const runButton = document.querySelector<HTMLButtonElement>('#run')!;
 const seedUiButton = document.querySelector<HTMLButtonElement>('#seed-ui')!;
 const inspectButton = document.querySelector<HTMLButtonElement>('#inspect')!;
 const results = document.querySelector<HTMLElement>('#results')!;
 const SIZE = { width: 64, height: 48 };
-const SESSION_A = crypto.randomUUID();
-const SESSION_B = crypto.randomUUID();
-const SESSION_RECOVERY = crypto.randomUUID();
+const SESSION_A = createUuid();
+const SESSION_B = createUuid();
+const SESSION_RECOVERY = createUuid();
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
 }
+
+assert([SESSION_A, SESSION_B, SESSION_RECOVERY].every((id) => /^[\da-f]{8}-[\da-f]{4}-4[\da-f]{3}-[89ab][\da-f]{3}-[\da-f]{12}$/i.test(id)), 'Session IDs must be UUID v4 values.');
 
 function createCandidate(assetId: string, name: string, sourceBytes: number[]): ImageImportCandidate {
   const canvas = document.createElement('canvas');

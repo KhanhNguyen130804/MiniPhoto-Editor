@@ -4,6 +4,7 @@ import { DRAFT_THUMBNAIL_MAX_BYTES, renderDraftThumbnail } from './draftThumbnai
 import { CURRENT_PRESET_VERSION } from './adjustmentFilters';
 import { validateEditorSnapshot } from './draftValidation';
 import type { EditorSnapshot } from './snapshot';
+import { createUuid } from './uuid';
 
 export const DRAFT_DATABASE_NAME = 'miniphoto-local';
 const DATABASE_VERSION = 1;
@@ -184,7 +185,7 @@ export async function acquireDraftLease(
       ownerSessionId,
       leaseId: active && current?.ownerSessionId === ownerSessionId && confirmedLease === undefined
         ? current.leaseId
-        : crypto.randomUUID(),
+        : createUuid(),
       leaseExpiresAt: now + DRAFT_LEASE_DURATION_MS,
     };
     transaction.objectStore('meta').put(lease);

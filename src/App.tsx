@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type RefObject } from 'react';
+import { App as CapacitorApp } from '@capacitor/app';
+import { Capacitor } from '@capacitor/core';
 import type { FabricImage } from 'fabric';
 import EditorCanvas, { type EditorCanvasHandle } from './features/editor/EditorCanvas';
 import LayersPanel from './features/editor/LayersPanel';
@@ -33,6 +35,8 @@ import {
 } from './features/editor/engine/geometry';
 import { calculateResize, type ResizeAxis, type ResizeDimensions, type ResizeError } from './features/editor/engine/resize';
 import { exportImage, probeExportFormat, type ExportFormat } from './features/editor/engine/exportImage';
+import { createUuid } from './features/editor/engine/uuid';
+import { saveImageToGallery } from './features/editor/androidGallery';
 import { createCompareSnapshot, selectImagePreset, type ImageAdjustments } from './features/editor/engine/adjustmentFilters';
 import { createDraftAutosave, type DraftAutosaveController, type DraftSaveStatus } from './features/editor/engine/draftAutosave';
 import {
@@ -81,6 +85,8 @@ type DraftLeaseView =
   | { kind: 'inactive' | 'checking' }
   | { kind: 'owner'; lease: DraftLeaseRecord }
   | { kind: 'held' | 'lost' | 'error'; lease: DraftLeaseRecord | null };
+
+const ANDROID_BACK_EVENT = 'miniphoto:android-back';
 
 function observedLeaseView(lease: DraftLeaseRecord | null): DraftLeaseView {
   return lease && lease.leaseExpiresAt > Date.now()
@@ -541,6 +547,7 @@ function EditorPage({
   const [activePanelTab, setActivePanelTab] = useState<'properties' | 'layers'>('properties');
   const exportDialogRef = useRef<HTMLDialogElement>(null);
   const exportUrlRef = useRef<string | null>(null);
+  const exportBlobRef = useRef<Blob | null>(null);
   const exportGenerationRef = useRef(0);
   const exportOperationRef = useRef(0);
   const [exportSupport, setExportSupport] = useState<Record<ExportFormat, boolean> | null>(null);
@@ -550,6 +557,8 @@ function EditorPage({
   const [exportNameBase, setExportNameBase] = useState(() => makeExportBasename(candidate.source.name));
   const [exportBytes, setExportBytes] = useState(0);
   const [exportBusy, setExportBusy] = useState(false);
+  const [gallerySaving, setGallerySaving] = useState(false);
+  const [galleryStatus, setGalleryStatus] = useState('');
   const [exportError, setExportError] = useState('');
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [cropPending, setCropPending] = useState<PendingCrop | null>(null);
@@ -1139,8 +1148,10 @@ function EditorPage({
   const clearDownload = () => {
     if (exportUrlRef.current) URL.revokeObjectURL(exportUrlRef.current);
     exportUrlRef.current = null;
+    exportBlobRef.current = null;
     setDownloadUrl(null);
     setExportBytes(0);
+    setGalleryStatus('');
   };
 
   useEffect(() => {
@@ -1168,7 +1179,7 @@ function EditorPage({
   }, []);
 
   const generateExport = async () => {
-    if (exportBusy || cropPending || resizePending) return;
+    if (exportBusy || gallerySaving || cropPending || resizePending) return;
     clearDownload();
     setExportError('');
     setExportBusy(true);
@@ -1183,6 +1194,7 @@ function EditorPage({
       if (generation !== exportGenerationRef.current) return;
       const url = URL.createObjectURL(blob);
       exportUrlRef.current = url;
+      exportBlobRef.current = blob;
       setDownloadUrl(url);
       setExportBytes(blob.size);
     } catch (error) {
@@ -1191,6 +1203,22 @@ function EditorPage({
       }
     } finally {
       if (operation === exportOperationRef.current) setExportBusy(false);
+    }
+  };
+
+  const saveExportToGallery = async () => {
+    const blob = exportBlobRef.current;
+    if (!blob || gallerySaving) return;
+    setGallerySaving(true);
+    setGalleryStatus('');
+    setExportError('');
+    try {
+      await saveImageToGallery(blob, exportFilename(exportNameBase, exportFormat));
+      setGalleryStatus('Đã lưu ảnh vào thư viện.');
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : 'Không thể lưu ảnh vào thư viện. Hãy thử lại.');
+    } finally {
+      setGallerySaving(false);
     }
   };
 
@@ -1258,6 +1286,42 @@ function EditorPage({
     setCompareActive(true);
   };
   const stopCompare = () => setCompareActive(false);
+
+  useEffect(() => {
+    const onAndroidBack = (event: Event) => {
+      if (event.defaultPrevented) return;
+      if (compareActive) {
+        stopCompare();
+        event.preventDefault();
+        return;
+      }
+      if (cropPending) {
+        cancelCrop();
+        event.preventDefault();
+        return;
+      }
+      if (resizePending) {
+        cancelResize();
+        event.preventDefault();
+        return;
+      }
+      if (panelOpen || adjustmentOpen || filterOpen || textToolOpen || shapeToolOpen) {
+        if (!finishTextEdit()) {
+          event.preventDefault();
+          return;
+        }
+        finishAdjustmentOperation();
+        setAdjustmentOpen(false);
+        setFilterOpen(false);
+        setTextToolOpen(false);
+        setShapeToolOpen(false);
+        setPanelOpen(false);
+        event.preventDefault();
+      }
+    };
+    window.addEventListener(ANDROID_BACK_EVENT, onAndroidBack);
+    return () => window.removeEventListener(ANDROID_BACK_EVENT, onAndroidBack);
+  }, [compareActive, cropPending, resizePending, panelOpen, adjustmentOpen, filterOpen, textToolOpen, shapeToolOpen]);
 
   useEffect(() => {
     const finishNudge = () => canvasActionsRef.current?.finishNudge();
@@ -1947,11 +2011,14 @@ function EditorPage({
         className="export-dialog"
         aria-labelledby="export-dialog-title"
         onClose={closeExportDialog}
+        onCancel={(event) => {
+          if (gallerySaving) event.preventDefault();
+        }}
       >
         <form method="dialog" className="dialog-close-row">
-          <button className="dialog-close" type="submit" aria-label="Đóng hộp thoại xuất ảnh">×</button>
+          <button className="dialog-close" type="submit" aria-label="Đóng hộp thoại xuất ảnh" disabled={gallerySaving}>×</button>
         </form>
-        <p className="eyebrow">TẢI ẢNH VỀ THIẾT BỊ</p>
+        <p className="eyebrow">{Capacitor.getPlatform() === 'android' ? 'LƯU ẢNH VÀO THƯ VIỆN' : 'TẢI ẢNH VỀ THIẾT BỊ'}</p>
         <h2 id="export-dialog-title">Xuất ảnh</h2>
         <form
           className="export-form"
@@ -1966,7 +2033,7 @@ function EditorPage({
               <input
                 value={exportNameBase}
                 maxLength={100}
-                disabled={exportBusy}
+                disabled={exportBusy || gallerySaving}
                 onChange={(event) => {
                   setExportNameBase(event.currentTarget.value);
                   clearDownload();
@@ -1979,7 +2046,7 @@ function EditorPage({
             Định dạng
             <select
               value={exportFormat}
-              disabled={exportBusy || exportSupport === null}
+              disabled={exportBusy || gallerySaving || exportSupport === null}
               onChange={(event) => {
                 setExportFormat(event.currentTarget.value as ExportFormat);
                 clearDownload();
@@ -2001,7 +2068,7 @@ function EditorPage({
                 min="1"
                 max="100"
                 value={exportQuality}
-                disabled={exportBusy}
+                disabled={exportBusy || gallerySaving}
                 onChange={(event) => {
                   setExportQuality(Number(event.currentTarget.value));
                   clearDownload();
@@ -2015,7 +2082,7 @@ function EditorPage({
                 <input
                   type="color"
                   value={exportBackground}
-                  disabled={exportBusy}
+                  disabled={exportBusy || gallerySaving}
                   onChange={(event) => {
                     setExportBackground(event.currentTarget.value);
                     clearDownload();
@@ -2024,11 +2091,13 @@ function EditorPage({
               </label>
           )}
           <p className="export-resolution">Kích thước: {snapshot.document.width} × {snapshot.document.height} px</p>
-          <button className="button button-primary" type="submit" disabled={exportBusy || exportSupport === null || !Object.values(exportSupport).some(Boolean)}>
+          <button className="button button-primary" type="submit" disabled={exportBusy || gallerySaving || exportSupport === null || !Object.values(exportSupport).some(Boolean)}>
             {exportBusy ? 'Đang tạo file…' : 'Tạo file'}
           </button>
         </form>
         {exportBusy && <p className="export-status" role="status" aria-live="polite">Đang render ảnh ở kích thước tài liệu… Có thể đóng hộp thoại; kết quả sẽ bị bỏ khi hoàn tất.</p>}
+        {gallerySaving && <p className="export-status" role="status" aria-live="polite">Đang lưu ảnh vào thư viện…</p>}
+        {galleryStatus && <p className="export-status" role="status" aria-live="polite">{galleryStatus}</p>}
         {!hasVisibleContent && (
           <p className="export-empty-warning" role="status">
             Tài liệu hiện không có nội dung hiển thị. PNG sẽ trong suốt; JPG dùng màu nền đã chọn.
@@ -2038,10 +2107,12 @@ function EditorPage({
         {downloadUrl && (
           <div className="export-ready" role="status">
             <img className="export-preview" src={downloadUrl} alt="Xem trước file ảnh đã tạo" />
-            <span>File đã sẵn sàng ({exportBytes.toLocaleString('vi-VN')} byte). Bấm liên kết để tải xuống.</span>
-            <a className="button button-primary" href={downloadUrl} download={exportFilename(exportNameBase, exportFormat)}>
-              Tải ảnh xuống
-            </a>
+            <span>{Capacitor.getPlatform() === 'android'
+              ? `Ảnh đã sẵn sàng (${exportBytes.toLocaleString('vi-VN')} byte). Lưu bản xuất vào thư viện ảnh.`
+              : `File đã sẵn sàng (${exportBytes.toLocaleString('vi-VN')} byte). Bấm liên kết để tải xuống.`}</span>
+            {Capacitor.getPlatform() === 'android'
+              ? <button className="button button-primary" type="button" onClick={() => { void saveExportToGallery(); }} disabled={gallerySaving}>Lưu vào thư viện</button>
+              : <a className="button button-primary" href={downloadUrl} download={exportFilename(exportNameBase, exportFormat)}>Tải ảnh xuống</a>}
           </div>
         )}
       </dialog>
@@ -2050,6 +2121,7 @@ function EditorPage({
 }
 
 function PrivacyPage() {
+  const android = Capacitor.getPlatform() === 'android';
   return (
     <div className="content-page">
       <header className="site-header">
@@ -2065,11 +2137,15 @@ function PrivacyPage() {
 
         <section className="content-card" aria-labelledby="privacy-now-title">
           <h2 id="privacy-now-title">Hiện trạng bản dựng</h2>
-          <p>Ảnh được đọc, giải mã và xuất ngay trong trình duyệt trên thiết bị; bản dựng không tải ảnh hay bản nháp lên máy chủ. Ứng dụng tự động lưu source ảnh, snapshot chỉnh sửa và thumbnail trong IndexedDB của trình duyệt này. Khi mở lại, bạn có thể chọn tiếp tục chỉnh sửa, mở ảnh nguồn trong trường hợp snapshot không dùng được, hoặc xác nhận bỏ bản nháp.</p>
+          <p>{android
+            ? 'Ảnh được đọc, giải mã và xuất ngay trên thiết bị; bản dựng không tải ảnh hay bản nháp lên máy chủ. Ứng dụng tự động lưu source ảnh, snapshot chỉnh sửa và thumbnail trong IndexedDB của ứng dụng. Ảnh chỉ được ghi vào thư viện khi bạn chủ động bấm “Lưu vào thư viện”; Android 7–9 sẽ hỏi quyền lưu trữ tại thời điểm đó. Khi mở lại, bạn có thể chọn tiếp tục chỉnh sửa, mở ảnh nguồn trong trường hợp snapshot không dùng được, hoặc xác nhận bỏ bản nháp.'
+            : 'Ảnh được đọc, giải mã và xuất ngay trong trình duyệt; bản dựng không tải ảnh hay bản nháp lên máy chủ. Ứng dụng tự động lưu source ảnh, snapshot chỉnh sửa và thumbnail trong IndexedDB của origin này. Khi mở lại, bạn có thể chọn tiếp tục chỉnh sửa, mở ảnh nguồn trong trường hợp snapshot không dùng được, hoặc xác nhận bỏ bản nháp.'}</p>
         </section>
         <section className="content-card" aria-labelledby="privacy-later-title">
           <h2 id="privacy-later-title">Giới hạn bản nháp</h2>
-          <p>Mỗi origin chỉ giữ một bản nháp trong bộ nhớ trình duyệt trên thiết bị này; dữ liệu không đồng bộ. Quota, chế độ riêng tư hoặc việc xóa dữ liệu trang có thể làm lưu thất bại hay mất dữ liệu. Hãy kiểm tra trạng thái lưu trước khi rời trang; file tải xuống chỉ được tạo khi bạn chủ động xuất.</p>
+          <p>{android
+            ? 'Ứng dụng chỉ giữ một bản nháp cục bộ; dữ liệu không đồng bộ và sẽ mất khi gỡ ứng dụng hoặc xóa dữ liệu ứng dụng. Quota hệ thống có thể làm lưu thất bại. File trong thư viện chỉ được tạo khi bạn chủ động lưu bản xuất.'
+            : 'Mỗi origin chỉ giữ một bản nháp trong bộ nhớ trình duyệt trên thiết bị này; dữ liệu không đồng bộ. Quota, chế độ riêng tư hoặc việc xóa dữ liệu trang có thể làm lưu thất bại hay mất dữ liệu. File tải xuống chỉ được tạo khi bạn chủ động xuất.'}</p>
         </section>
         <a className="button button-secondary" href="/">Quay lại trang chủ</a>
       </main>
@@ -2090,7 +2166,7 @@ function NotFoundPage() {
 
 export default function App() {
   const [route, setRoute] = useState<Route>(currentRoute);
-  const [draftSessionId] = useState(() => crypto.randomUUID());
+  const [draftSessionId] = useState(createUuid);
   const state = previewState();
   const [candidate, setCandidate] = useState<ImageImportCandidate | null>(null);
   const [editorHistory, setEditorHistory] = useState<HistoryState<EditorSnapshot> | null>(null);
@@ -2590,6 +2666,35 @@ export default function App() {
     }
     draftAutosaveRef.current?.schedule({ candidate, leaseId: draftLease.lease.leaseId, snapshot: editorSnapshot, revision: editorHistory.revision });
   }, [candidate, draftLease.kind, editorHistory, editorSnapshot]);
+
+  useEffect(() => {
+    if (Capacitor.getPlatform() !== 'android') return;
+    let disposed = false;
+    let listener: { remove: () => Promise<void> } | null = null;
+    void CapacitorApp.addListener('backButton', ({ canGoBack }) => {
+      const dialogs = document.querySelectorAll<HTMLDialogElement>('dialog[open]');
+      const topDialog = dialogs.item(dialogs.length - 1);
+      if (topDialog) {
+        const cancel = new Event('cancel', { cancelable: true });
+        topDialog.dispatchEvent(cancel);
+        if (!cancel.defaultPrevented && topDialog.open) topDialog.close();
+        return;
+      }
+
+      const back = new Event(ANDROID_BACK_EVENT, { cancelable: true });
+      window.dispatchEvent(back);
+      if (back.defaultPrevented) return;
+      if (canGoBack) window.history.back();
+      else void CapacitorApp.exitApp();
+    }).then((registered) => {
+      if (disposed) void registered.remove();
+      else listener = registered;
+    });
+    return () => {
+      disposed = true;
+      if (listener) void listener.remove();
+    };
+  }, []);
 
   useEffect(() => {
     if (route === 'editor' && !candidate && draftInspection.kind === 'none') {

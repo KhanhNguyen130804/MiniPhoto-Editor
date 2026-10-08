@@ -9,6 +9,7 @@ import { deleteOverlayLayer, nudgeOverlayLayer, reorderOverlayLayer, setLayerVis
 import { createNudgeInput, pressNudgeKey, releaseNudgeKey as releaseTrackedNudgeKey, type NudgeInput, type NudgeKey } from './engine/nudgeInput';
 import { applyTextPropertiesPatch, createDefaultTextObject, ensureTextFontReady, normalizeTextContent, putTextOverlay, removeTextOverlay, restoreTextObject, serializeTextObject, textPropertiesFromObject, validateTextPropertiesPatch, type TextProperties, type TextPropertiesPatch } from './engine/text';
 import { applyShapePropertiesPatch, createDefaultShapeObject, putShapeOverlay, restoreShapeObject, serializeShapeObject, shapePropertiesFromObject, type SelectedShape, type ShapeKind, type ShapePropertiesPatch } from './engine/shapes';
+import { createUuid } from './engine/uuid';
 
 type Size = { width: number; height: number };
 
@@ -492,7 +493,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     if (!finishEditorEdit()) return;
     const canvas = canvasRef.current;
     if (!canvas) throw new Error('Vùng chỉnh sửa đang khởi tạo. Hãy thử thêm chữ lại.');
-    const id = crypto.randomUUID();
+    const id = createUuid();
     const { object, overlay } = createDefaultTextObject(snapshotRef.current, id);
     registerTextObject(id, object);
     attachedOverlaysRef.current = [...attachedOverlaysRef.current, object];
@@ -522,7 +523,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     if (!finishEditorEdit()) return;
     const canvas = canvasRef.current;
     if (!canvas) throw new Error('Vùng chỉnh sửa đang khởi tạo. Hãy thử thêm hình lại.');
-    const id = crypto.randomUUID();
+    const id = createUuid();
     const current = snapshotRef.current;
     const { object, overlay } = createDefaultShapeObject(current, id, shape);
     const next = putShapeOverlay(current, overlay);

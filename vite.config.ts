@@ -13,4 +13,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(manifest.version),
     __RENDERER_VERSION__: JSON.stringify(manifest.dependencies.fabric),
   },
+  build: {
+    target: 'chrome80',
+  },
 });

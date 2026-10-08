@@ -1,4 +1,5 @@
 import { FabricImage, type ImageSource } from 'fabric';
+import { createUuid } from './uuid';
 
 export const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_IMAGE_PIXELS = 12_000_000;
@@ -223,7 +224,7 @@ function candidate(source: File, image: FabricImage, release = () => {}): ImageI
   let disposed = false;
 
   return {
-    assetId: crypto.randomUUID(),
+    assetId: createUuid(),
     source,
     importedAt: Date.now(),
     image,
