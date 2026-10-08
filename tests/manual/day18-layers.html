@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Day 18 — layers</title>
+    <link rel="stylesheet" href="/src/app.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Day 18 — layers</h1>
+      <p>Kiểm tra thứ tự layer, visibility, xóa, history, hit testing và export.</p>
+      <button id="run" type="button">Chạy kiểm tra Day 18</button>
+      <pre id="results" aria-live="polite">Chưa chạy.</pre>
+      <h2>Kiểm tra giao diện thủ công</h2>
+      <ol>
+        <li>Mở editor với một ảnh, thêm text và từng shape; mở bảng Lớp và xác nhận topmost-first, nhãn ngắn, nút chọn/ẩn/xóa và ảnh nền ở cuối.</li>
+        <li>Chọn overlay từ danh sách, sửa thuộc tính; ẩn overlay rồi tiếp tục chọn/sửa nó từ danh sách mà layer vẫn ẩn.</li>
+        <li>Chọn overlay nằm ngoài khung tài liệu từ danh sách; properties mở mà không tự hiện layer.</li>
+        <li>Ẩn ảnh nền; xác nhận PNG trong suốt, JPG dùng màu nền đã chọn và có cảnh báo tài liệu không có nội dung hiển thị khi mọi layer đều ẩn.</li>
+        <li>Xóa selected và unselected overlay, sau đó Undo/Redo; xác nhận selection được xóa khi cần và ảnh nền không thể xóa.</li>
+        <li>Dùng Tab/Enter/Space để tới nút chọn, mắt và xóa; kiểm tra nhãn truy cập và trạng thái disable trong lúc crop/resize/export.</li>
+      </ol>
+    </main>
+    <script type="module" src="./day18-layers.ts"></script>
+  </body>
+</html>

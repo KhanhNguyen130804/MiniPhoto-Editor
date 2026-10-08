@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Gate 0 — geometry, export and draft evidence</title>
+  </head>
+  <body>
+    <main>
+      <h1>Gate 0 — geometry, export and draft evidence</h1>
+      <p>Harness cô lập kiểm tra PNG độ phân giải cao và fixture WebP; draft được lưu trong database <code>miniphoto-day3-spike</code>.</p>
+      <button id="run" type="button">Chạy kiểm tra Gate 0</button>
+      <button id="restore" type="button" disabled>Khôi phục draft đã lưu</button>
+      <button id="rollback" type="button" disabled>Kiểm tra transaction abort</button>
+      <button id="reset" type="button">Xóa dữ liệu spike</button>
+      <p><a id="download" hidden>day3-spike.png</a></p>
+      <pre id="results" aria-live="polite">Chưa chạy.</pre>
+      <div id="preview"></div>
+    </main>
+    <script type="module" src="./day3-spike.ts"></script>
+  </body>
+</html>

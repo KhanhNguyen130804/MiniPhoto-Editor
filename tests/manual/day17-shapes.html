@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Day 17 — hình khối</title>
+    <link rel="stylesheet" href="/src/app.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Day 17 — hình khối</h1>
+      <p>Kiểm tra mặc định, validation, thao tác hình học, history và export của rectangle, circle, line.</p>
+      <button id="run" type="button">Chạy kiểm tra Day 17</button>
+      <pre id="results" aria-live="polite">Chưa chạy.</pre>
+      <h2>Kiểm tra giao diện thủ công</h2>
+      <ul>
+        <li>Mở editor với một ảnh; thêm từng loại hình và xác nhận hình mới được chọn ở gần giữa tài liệu.</li>
+        <li>Đổi fill trong suốt/màu, stroke, độ rộng viền và opacity; xác nhận mỗi thao tác chỉ tạo một Undo.</li>
+        <li>Kéo, scale và xoay rectangle; scale circle và xác nhận vẫn tròn; kéo line để đổi độ dài/góc.</li>
+        <li>Undo/Redo rồi export PNG; đối chiếu màu, opacity, kích thước file và phần hình bị cắt theo document.</li>
+        <li>Đạt giới hạn 50 overlay; nút thêm hình bị khóa và scene không đổi.</li>
+      </ul>
+    </main>
+    <script type="module" src="./day17-shapes.ts"></script>
+  </body>
+</html>

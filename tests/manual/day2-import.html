@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Day 2 image import spike</title>
+  </head>
+  <body>
+    <main>
+      <h1>Day 2 — image import spike</h1>
+      <label for="decoder">Decoder</label>
+      <select id="decoder">
+        <option value="fabric">FabricImage.fromURL(blob URL)</option>
+        <option value="bitmap">createImageBitmap → canvas → FabricImage</option>
+      </select>
+      <button id="run" type="button">Run checks</button>
+      <pre id="results" aria-live="polite">Chưa chạy.</pre>
+    </main>
+    <script type="module" src="./day2-import.ts"></script>
+  </body>
+</html>

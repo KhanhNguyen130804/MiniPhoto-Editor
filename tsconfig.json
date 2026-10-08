@@ -1,0 +1,19 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "types": ["vite/client"]
+  },
+  "include": ["src", "tests/manual/day2-import.ts", "tests/manual/day3-spike.ts", "tests/manual/day7-history.ts", "tests/manual/day8-transform-export.ts", "tests/manual/day9-crop-pending.ts", "tests/manual/day10-crop-apply.ts", "tests/manual/day11-resize.ts", "tests/manual/day12-resize-apply.ts", "tests/manual/day13-adjustments.ts", "tests/manual/day15-text.ts", "tests/manual/day16-text-properties.ts", "tests/manual/day17-shapes.ts", "tests/manual/day18-layers.ts", "tests/manual/day19-layers-keyboard.ts", "tests/manual/day20-creative-integration.ts"]
+}
