@@ -78,6 +78,7 @@ function createCandidate(): { candidate: ImageImportCandidate; sourceCanvas: HTM
       assetId: 'day12-source',
       source: new File([], 'day12-fixture.png', { type: 'image/png' }),
       image,
+      sourceElement: sourceCanvas,
       width: sourceCanvas.width,
       height: sourceCanvas.height,
       dispose: () => image.dispose(),

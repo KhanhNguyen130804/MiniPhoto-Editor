@@ -138,6 +138,7 @@ async function runExports(): Promise<string[]> {
       assetId: 'transparent-jpeg-asset',
       source: new File([], 'transparent.png', { type: 'image/png' }),
       image,
+      sourceElement: transparentCanvas,
       width: 2,
       height: 2,
       dispose: () => image.dispose(),

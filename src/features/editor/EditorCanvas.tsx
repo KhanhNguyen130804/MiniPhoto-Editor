@@ -4,6 +4,7 @@ import { applyDocumentTransform, type GeometryCommand } from './engine/geometry'
 import type { EditorSnapshot } from './engine/snapshot';
 import { createFabricOverlays } from './engine/scene';
 import { resizeCropRect, type CropHandle, type CropRatio, type CropRect } from './engine/crop';
+import { applyImageAdjustments } from './engine/adjustmentFilters';
 
 type Size = { width: number; height: number };
 
@@ -76,6 +77,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
   const disposeQueueRef = useRef<Promise<void>>(Promise.resolve());
   const panStartRef = useRef<PanStart | null>(null);
   const cropDragRef = useRef<CropDrag | null>(null);
+  const filterFrameRef = useRef<number | null>(null);
   const [viewportSize, setViewportSize] = useState<Size>({ width: 0, height: 0 });
   const [viewportTransform, setViewportTransform] = useState<TMat2D>([1, 0, 0, 1, 0, 0]);
   const [zoom, setZoom] = useState(1);
@@ -279,7 +281,29 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
     } catch {
       setCanvasError(true);
     }
-  }, [image, snapshot]);
+  }, [image, snapshot.scene, snapshot.documentTransform, snapshot.document.width, snapshot.document.height]);
+
+  useEffect(() => {
+    if (!image) return;
+    if (filterFrameRef.current !== null) cancelAnimationFrame(filterFrameRef.current);
+    const targetImage = image;
+    const appearance = snapshot.imageAppearance;
+    filterFrameRef.current = requestAnimationFrame(() => {
+      filterFrameRef.current = null;
+      if (imageRef.current !== targetImage) return;
+      try {
+        applyImageAdjustments(targetImage, appearance);
+        canvasRef.current?.requestRenderAll();
+      } catch {
+        setCanvasError(true);
+      }
+    });
+    return () => {
+      if (filterFrameRef.current !== null) cancelAnimationFrame(filterFrameRef.current);
+      filterFrameRef.current = null;
+    };
+  }, [image, snapshot.imageAppearance.presetId, snapshot.imageAppearance.presetVersion,
+    snapshot.imageAppearance.brightness, snapshot.imageAppearance.contrast, snapshot.imageAppearance.saturation]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -490,8 +514,8 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
         {canvasError ? (
           <div className="canvas-message canvas-runtime-error" role="alert">
             <span className="state-icon state-icon--error" aria-hidden="true">!</span>
-            <h1>Không thể mở vùng chỉnh sửa</h1>
-            <p>Hãy tải lại trang để thử khởi tạo canvas lần nữa.</p>
+            <h1>Không thể cập nhật vùng chỉnh sửa</h1>
+            <p>Hãy tải lại trang để thử khởi tạo lại canvas và ảnh xem trước.</p>
           </div>
         ) : children}
       </div>

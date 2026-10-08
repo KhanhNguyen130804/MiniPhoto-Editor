@@ -28,6 +28,7 @@ import {
 } from './features/editor/engine/geometry';
 import { calculateResize, type ResizeAxis, type ResizeDimensions, type ResizeError } from './features/editor/engine/resize';
 import { exportImage, type ExportFormat } from './features/editor/engine/exportImage';
+import type { ImageAdjustments } from './features/editor/engine/adjustmentFilters';
 import {
   createCropRect,
   CROP_RATIOS,
@@ -50,6 +51,23 @@ type PendingResize = {
   error: { field: ResizeAxis; code: ResizeError } | null;
   applyError: string | null;
 };
+type AdjustmentField = keyof ImageAdjustments;
+
+const ADJUSTMENT_FIELDS: readonly AdjustmentField[] = ['brightness', 'contrast', 'saturation'];
+const ADJUSTMENT_LABELS: Record<AdjustmentField, string> = {
+  brightness: 'Độ sáng',
+  contrast: 'Tương phản',
+  saturation: 'Bão hòa',
+};
+
+function snapshotAdjustments(snapshot: EditorSnapshot): ImageAdjustments {
+  const { brightness, contrast, saturation } = snapshot.imageAppearance;
+  return { brightness, contrast, saturation };
+}
+
+function sameAdjustments(left: ImageAdjustments, right: ImageAdjustments): boolean {
+  return ADJUSTMENT_FIELDS.every((field) => left[field] === right[field]);
+}
 
 const idleImportStatus: ImportStatus = { phase: 'idle' };
 
@@ -150,7 +168,7 @@ function HelpDialogTrigger({ dark = false }: { dark?: boolean }) {
         <p className="eyebrow">MINIPHOTO EDITOR</p>
         <h2 id="help-dialog-title">Bắt đầu thật đơn giản</h2>
         <p id="help-dialog-copy">
-          Bạn có thể mở một ảnh JPG, PNG hoặc WebP tĩnh, xoay/lật và tải ảnh xuống. Các công cụ chỉnh sửa khác và lưu bản nháp sẽ được bổ sung sau.
+          Bạn có thể mở một ảnh JPG, PNG hoặc WebP tĩnh, cắt, đổi kích thước, xoay/lật, tinh chỉnh màu và tải ảnh xuống. Lưu bản nháp, bộ lọc và công cụ chữ/hình sẽ được bổ sung sau.
         </p>
         <div className="dialog-note">
           <strong>Cần trợ giúp ngay?</strong>
@@ -264,13 +282,13 @@ function HomePage({
           <div className="hero-copy">
             <p className="eyebrow"><span className="eyebrow-dot" /> BỘ CÔNG CỤ ẢNH GỌN NHẸ</p>
             <h1 id="home-title">Chỉnh ảnh đẹp,<br /><span>theo cách của bạn.</span></h1>
-            <p className="hero-lede">Cắt ảnh, tinh chỉnh màu sắc và thêm dấu ấn riêng — trong một không gian đơn giản, dễ dùng.</p>
-            <ul className="feature-list" aria-label="Công cụ dự kiến">
+            <p className="hero-lede">Cắt ảnh, tinh chỉnh màu sắc và tải kết quả xuống — trong một không gian đơn giản, dễ dùng.</p>
+            <ul className="feature-list" aria-label="Công cụ hiện có">
               <li><span aria-hidden="true">✓</span> Cắt &amp; đổi kích thước</li>
               <li><span aria-hidden="true">✓</span> Chỉnh màu</li>
-              <li><span aria-hidden="true">✓</span> Thêm chữ</li>
+              <li><span aria-hidden="true">✓</span> Xoay &amp; lật</li>
             </ul>
-            <p className="build-note">Ảnh được đọc trong trình duyệt. Bạn có thể xoay/lật và tải ảnh; các công cụ khác và lưu bản nháp sẽ được bổ sung sau.</p>
+            <p className="build-note">Ảnh được đọc trong trình duyệt. Hiện có thể cắt, đổi kích thước, chỉnh màu, xoay/lật và tải ảnh. Lưu bản nháp cùng công cụ chữ/hình sẽ được bổ sung sau.</p>
           </div>
 
           <section className={`import-card${state === 'error' || status.phase === 'error' ? ' import-card--error' : ''}`} aria-labelledby="import-title">
@@ -344,6 +362,7 @@ function EditorPage({
   onTransform,
   onApplyCrop,
   onApplyResize,
+  onApplyAdjustments,
   onChoose,
   replaceButtonRef,
   detachImageRef,
@@ -358,6 +377,7 @@ function EditorPage({
   onTransform: (command: GeometryCommand) => void;
   onApplyCrop: (snapshot: EditorSnapshot) => void;
   onApplyResize: (snapshot: EditorSnapshot) => void;
+  onApplyAdjustments: (snapshot: EditorSnapshot) => void;
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
@@ -379,9 +399,101 @@ function EditorPage({
   const [cropInput, setCropInput] = useState<CropFields | null>(null);
   const [cropError, setCropError] = useState('');
   const [resizePending, setResizePending] = useState<PendingResize | null>(null);
+  const [adjustmentOpen, setAdjustmentOpen] = useState(false);
+  const [adjustmentPreview, setAdjustmentPreview] = useState<ImageAdjustments | null>(null);
+  const [adjustmentOperationActive, setAdjustmentOperationActive] = useState(false);
+  const [adjustmentInputs, setAdjustmentInputs] = useState<Partial<Record<AdjustmentField, string>>>({});
+  const [adjustmentErrors, setAdjustmentErrors] = useState<Partial<Record<AdjustmentField, string>>>({});
+  const adjustmentOperationRef = useRef<{ base: EditorSnapshot; values: ImageAdjustments } | null>(null);
+  const adjustmentErrorsRef = useRef<Partial<Record<AdjustmentField, string>>>({});
+  const latestSnapshotRef = useRef(snapshot);
+  latestSnapshotRef.current = snapshot;
+
+  const clearAdjustmentDraft = () => {
+    adjustmentOperationRef.current = null;
+    adjustmentErrorsRef.current = {};
+    setAdjustmentOperationActive(false);
+    setAdjustmentPreview(null);
+    setAdjustmentInputs({});
+    setAdjustmentErrors({});
+  };
+
+  const beginAdjustmentOperation = () => {
+    if (adjustmentOperationRef.current) return;
+    const base = latestSnapshotRef.current;
+    const values = snapshotAdjustments(base);
+    adjustmentOperationRef.current = { base, values };
+    adjustmentErrorsRef.current = {};
+    setAdjustmentPreview(values);
+    setAdjustmentErrors({});
+  };
+
+  const cancelAdjustmentOperation = () => clearAdjustmentDraft();
+
+  const finishAdjustmentOperation = () => {
+    const operation = adjustmentOperationRef.current;
+    if (!operation) return;
+    if (Object.keys(adjustmentErrorsRef.current).length) {
+      clearAdjustmentDraft();
+      return;
+    }
+    if (!sameAdjustments(snapshotAdjustments(operation.base), operation.values)) {
+      const next = {
+        ...operation.base,
+        imageAppearance: { ...operation.base.imageAppearance, ...operation.values },
+      };
+      latestSnapshotRef.current = next;
+      onApplyAdjustments(next);
+    }
+    clearAdjustmentDraft();
+  };
+
+  const changeAdjustment = (field: AdjustmentField, rawValue: string) => {
+    setAdjustmentInputs((current) => ({ ...current, [field]: rawValue }));
+    const value = Number(rawValue);
+    if (rawValue.trim() === '' || !Number.isInteger(value) || value < -100 || value > 100) {
+      const message = 'Nhập số nguyên từ -100 đến 100.';
+      adjustmentErrorsRef.current = { ...adjustmentErrorsRef.current, [field]: message };
+      setAdjustmentErrors(adjustmentErrorsRef.current);
+      return;
+    }
+    const { [field]: _removed, ...otherErrors } = adjustmentErrorsRef.current;
+    adjustmentErrorsRef.current = otherErrors;
+    setAdjustmentErrors(otherErrors);
+    if (!adjustmentOperationRef.current) beginAdjustmentOperation();
+    const operation = adjustmentOperationRef.current;
+    if (!operation) return;
+    const values = { ...operation.values, [field]: value };
+    adjustmentOperationRef.current = { ...operation, values };
+    setAdjustmentOperationActive(!sameAdjustments(snapshotAdjustments(operation.base), values));
+    setAdjustmentPreview(values);
+  };
+
+  const resetAdjustments = (field?: AdjustmentField) => {
+    if (adjustmentOperationRef.current) cancelAdjustmentOperation();
+    const base = latestSnapshotRef.current;
+    const values = snapshotAdjustments(base);
+    const next = field ? { ...values, [field]: 0 } : { brightness: 0, contrast: 0, saturation: 0 };
+    if (sameAdjustments(values, next)) return;
+    const nextSnapshot = { ...base, imageAppearance: { ...base.imageAppearance, ...next } };
+    latestSnapshotRef.current = nextSnapshot;
+    onApplyAdjustments(nextSnapshot);
+    setAdjustmentInputs({});
+    setAdjustmentErrors({});
+  };
+
+  const previewSnapshot = useMemo(() => adjustmentPreview
+    ? { ...snapshot, imageAppearance: { ...snapshot.imageAppearance, ...adjustmentPreview } }
+    : snapshot, [snapshot, adjustmentPreview]);
+
+  useEffect(() => {
+    clearAdjustmentDraft();
+  }, [candidate.assetId, snapshot.imageAppearance.brightness, snapshot.imageAppearance.contrast, snapshot.imageAppearance.saturation]);
 
   const startCrop = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    setAdjustmentOpen(false);
+    setPanelOpen(true);
     const rect = createCropRect(snapshot.document, 'free');
     if (!rect) return;
     setCropPending({ ratio: 'free', rect });
@@ -397,6 +509,7 @@ function EditorPage({
 
   const startResize = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    setAdjustmentOpen(false);
     const base = { width: snapshot.document.width, height: snapshot.document.height };
     setResizePending({
       base,
@@ -575,8 +688,20 @@ function EditorPage({
     setExportError('');
   };
 
-  const activeTool = cropPending ? 'Cắt' : resizePending ? 'Kích thước' : null;
-  const documentActionLocked = exportBusy || Boolean(cropPending || resizePending);
+  const toggleAdjustments = () => {
+    if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    if (adjustmentOpen) {
+      setAdjustmentOpen(false);
+      setPanelOpen(false);
+    } else {
+      setAdjustmentOpen(true);
+      setPanelOpen(true);
+    }
+  };
+  const activeTool = cropPending ? 'Cắt' : resizePending ? 'Kích thước' : adjustmentOpen ? 'Điều chỉnh' : null;
+  const documentActionLocked = exportBusy || Boolean(cropPending || resizePending || adjustmentOperationActive);
+  const displayedAdjustments = adjustmentPreview ?? snapshotAdjustments(snapshot);
+  const previewCanvasSnapshot = previewSnapshot;
 
   return (
     <div className="editor-shell">
@@ -624,11 +749,13 @@ function EditorPage({
               className={`tool-item${activeTool === tool ? ' tool-item--active' : ''}`}
               type="button"
               key={tool}
-              disabled={(!['Cắt', 'Kích thước'].includes(tool)) || exportBusy || status.phase === 'loading' || Boolean(activeTool && activeTool !== tool)}
-              aria-pressed={['Cắt', 'Kích thước'].includes(tool) ? activeTool === tool : undefined}
+              disabled={(!['Cắt', 'Kích thước', 'Điều chỉnh'].includes(tool)) || exportBusy || status.phase === 'loading'
+                || Boolean((cropPending || resizePending) && activeTool !== tool)}
+              aria-pressed={['Cắt', 'Kích thước', 'Điều chỉnh'].includes(tool) ? activeTool === tool : undefined}
               onClick={tool === 'Cắt'
                 ? (cropPending ? cancelCrop : startCrop)
-                : tool === 'Kích thước' ? (resizePending ? cancelResize : startResize) : undefined}
+                : tool === 'Kích thước' ? (resizePending ? cancelResize : startResize)
+                  : tool === 'Điều chỉnh' ? toggleAdjustments : undefined}
             >
               <span className="tool-item__icon" aria-hidden="true">{['⌗', '↔', '◐', '✧', 'T', '◇'][index]}</span>
               <span>{tool}</span>
@@ -639,7 +766,7 @@ function EditorPage({
         <main className="workspace" aria-label="Vùng làm việc">
           <EditorCanvas
             image={candidate.image}
-            snapshot={snapshot}
+            snapshot={previewCanvasSnapshot}
             detachImageRef={detachImageRef}
             onTransform={onTransform}
             documentActionsDisabled={documentActionLocked}
@@ -750,11 +877,84 @@ function EditorPage({
                 <button className="button button-secondary" type="button" onClick={cancelResize}>Hủy resize</button>
               </div>
             </section>
+          ) : adjustmentOpen ? (
+            <section className="adjustment-controls" aria-labelledby="adjustment-controls-title">
+              <div className="adjustment-controls__intro">
+                <strong id="adjustment-controls-title">Tinh chỉnh màu</strong>
+                <p>Điều chỉnh ảnh nền từ -100 đến 100. Kết thúc thao tác để lưu một bước vào lịch sử.</p>
+              </div>
+              {ADJUSTMENT_FIELDS.map((field) => {
+                const label = ADJUSTMENT_LABELS[field];
+                const inputId = `adjustment-${field}`;
+                const errorId = `${inputId}-error`;
+                return (
+                  <div className="adjustment-control" key={field}>
+                    <div className="adjustment-control__heading">
+                      <label htmlFor={inputId}>{label}</label>
+                      <input
+                        id={inputId}
+                        type="number"
+                        min="-100"
+                        max="100"
+                        step="1"
+                        value={adjustmentInputs[field] ?? String(displayedAdjustments[field])}
+                        aria-invalid={adjustmentErrors[field] ? true : undefined}
+                        aria-describedby={adjustmentErrors[field] ? errorId : undefined}
+                        onFocus={beginAdjustmentOperation}
+                        onChange={(event) => changeAdjustment(field, event.currentTarget.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Escape') {
+                            event.preventDefault();
+                            cancelAdjustmentOperation();
+                          } else if (event.key === 'Enter') {
+                            event.preventDefault();
+                            finishAdjustmentOperation();
+                          }
+                        }}
+                        onBlur={finishAdjustmentOperation}
+                      />
+                      <button type="button" onClick={() => resetAdjustments(field)} aria-label={`Đặt lại ${label}`}>
+                        Đặt lại
+                      </button>
+                    </div>
+                    <input
+                      aria-label={`${label} -100 đến 100`}
+                      aria-describedby={adjustmentErrors[field] ? errorId : undefined}
+                      type="range"
+                      min="-100"
+                      max="100"
+                      step="1"
+                      value={displayedAdjustments[field]}
+                      onPointerDown={beginAdjustmentOperation}
+                      onPointerUp={finishAdjustmentOperation}
+                      onPointerCancel={cancelAdjustmentOperation}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Escape') {
+                          event.preventDefault();
+                          cancelAdjustmentOperation();
+                        } else if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown'].includes(event.key)) {
+                          beginAdjustmentOperation();
+                        }
+                      }}
+                      onKeyUp={finishAdjustmentOperation}
+                      onBlur={finishAdjustmentOperation}
+                      onChange={(event) => changeAdjustment(field, event.currentTarget.value)}
+                    />
+                    {adjustmentErrors[field] && (
+                      <span id={errorId} className="adjustment-validation-error" role="alert">{adjustmentErrors[field]}</span>
+                    )}
+                  </div>
+                );
+              })}
+              <button className="adjustment-reset-all" type="button" onClick={() => resetAdjustments()}>
+                Đặt lại tất cả
+              </button>
+            </section>
           ) : (
             <div className="properties-empty">
               <span className="properties-empty__icon" aria-hidden="true">◇</span>
               <strong>Công cụ chưa khả dụng</strong>
-              <p>Ảnh đã mở; các thao tác chỉnh sửa sẽ được bổ sung ở những ngày tiếp theo.</p>
+              <p>Chọn Cắt, Kích thước hoặc Điều chỉnh để thao tác với ảnh.</p>
             </div>
           )}
           <div className="properties-note">
@@ -762,7 +962,8 @@ function EditorPage({
             <p>{cropPending
               ? 'Khung cắt chỉ tồn tại trong phiên đang mở và không làm thay đổi lịch sử.'
               : resizePending ? 'Áp dụng sẽ scale toàn bộ nội dung và có thể hoàn tác bằng Undo.'
-                : 'Ảnh gốc và các bước chỉnh sửa sẽ được quản lý riêng biệt.'}</p>
+                : adjustmentOpen ? 'Điều chỉnh chỉ tác động ảnh nền; hình học và lớp phủ được giữ nguyên.'
+                  : 'Các thay đổi được lưu trong lịch sử của phiên chỉnh sửa.'}</p>
           </div>
         </aside>
       </div>
@@ -951,6 +1152,10 @@ export default function App() {
   };
 
   const applyResize = (snapshot: EditorSnapshot) => {
+    setEditorHistory((current) => current ? commitHistory(current, snapshot) : current);
+  };
+
+  const applyAdjustments = (snapshot: EditorSnapshot) => {
     setEditorHistory((current) => current ? commitHistory(current, snapshot) : current);
   };
 
@@ -1161,6 +1366,7 @@ export default function App() {
           onTransform={transformDocument}
           onApplyCrop={applyCrop}
           onApplyResize={applyResize}
+          onApplyAdjustments={applyAdjustments}
           onChoose={openFilePicker}
           replaceButtonRef={editorReplaceButtonRef}
           detachImageRef={detachImageRef}

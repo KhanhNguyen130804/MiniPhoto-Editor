@@ -82,6 +82,7 @@ function createCandidate() {
     assetId: 'day10-source',
     source: new File([], 'day10-fixture.png', { type: 'image/png' }),
     image,
+    sourceElement: sourceCanvas,
     width: sourceCanvas.width,
     height: sourceCanvas.height,
     dispose: () => image.dispose(),

@@ -1,4 +1,4 @@
-import { FabricImage } from 'fabric';
+import { FabricImage, type ImageSource } from 'fabric';
 
 export const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_IMAGE_PIXELS = 12_000_000;
@@ -203,6 +203,7 @@ export type ImageImportCandidate = {
   assetId: string;
   source: File;
   image: FabricImage;
+  sourceElement: ImageSource;
   width: number;
   height: number;
   dispose(): void;
@@ -216,12 +217,14 @@ function throwIfAborted(signal?: AbortSignal): void {
 
 function candidate(source: File, image: FabricImage, release = () => {}): ImageImportCandidate {
   const { width, height } = image.getOriginalSize();
+  const sourceElement = image.getElement();
   let disposed = false;
 
   return {
     assetId: crypto.randomUUID(),
     source,
     image,
+    sourceElement,
     width,
     height,
     dispose() {

@@ -7,6 +7,7 @@ import {
 import { applyDocumentTransform } from './geometry';
 import { createFabricOverlays } from './scene';
 import type { EditorSnapshot } from './snapshot';
+import { applyImageAdjustments } from './adjustmentFilters';
 
 export type ExportFormat = 'png' | 'jpeg';
 
@@ -76,7 +77,7 @@ export async function exportImage(
   });
 
   try {
-    const image = new FabricImage(candidate.image.getElement(), {
+    const image = new FabricImage(candidate.sourceElement, {
       left: source.left,
       top: source.top,
       scaleX: source.scaleX,
@@ -89,6 +90,7 @@ export async function exportImage(
       originX: 'left',
       originY: 'top',
     });
+    applyImageAdjustments(image, snapshot.imageAppearance);
     applyDocumentTransform(image, snapshot.documentTransform);
     renderer.add(image);
 
