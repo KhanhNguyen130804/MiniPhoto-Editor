@@ -1,6 +1,6 @@
 import { FabricImage } from 'fabric';
 import { createDraftAutosave, type DraftSaveStatus } from '../../src/features/editor/engine/draftAutosave';
-import { abortDraftSaveForManualCheck, DRAFT_DATABASE_NAME, readCurrentDraft, saveCurrentDraft } from '../../src/features/editor/engine/draftStore';
+import { abortDraftSaveForManualCheck, acquireDraftLease, DRAFT_DATABASE_NAME, readCurrentDraft, readDraftLease, releaseDraftLease, saveCurrentDraft } from '../../src/features/editor/engine/draftStore';
 import { commitHistory, createHistory, currentSnapshot, redoHistory, undoHistory } from '../../src/features/editor/engine/history';
 import type { ImageImportCandidate } from '../../src/features/editor/engine/imageImport';
 import { selectImagePreset } from '../../src/features/editor/engine/adjustmentFilters';
@@ -9,9 +9,16 @@ import { createImageBaselineSnapshot } from '../../src/features/editor/engine/sn
 const runButton = document.querySelector<HTMLButtonElement>('#run')!;
 const results = document.querySelector<HTMLElement>('#results')!;
 const SIZE = { width: 64, height: 48 };
+const DRAFT_SESSION_ID = crypto.randomUUID();
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+async function claimHarnessLease(): Promise<string> {
+  const claim = await acquireDraftLease(DRAFT_SESSION_ID, await readDraftLease());
+  assert(claim.kind === 'acquired', 'Close other tabs using this isolated draft database before running the harness.');
+  return claim.lease.leaseId;
 }
 
 function createCandidate(assetId: string, name: string, sourceBytes: number[]): ImageImportCandidate {
@@ -116,9 +123,11 @@ async function runAssertions(): Promise<string[]> {
   const firstBaseline = createImageBaselineSnapshot(first.assetId, first.width, first.height);
   const secondBaseline = createImageBaselineSnapshot(second.assetId, second.width, second.height);
   const passed: string[] = [];
+  let leaseId = '';
 
   try {
-    const initialAssetWrites = await countAssetWrites(() => saveCurrentDraft(first, firstBaseline, 0));
+    leaseId = await claimHarnessLease();
+    const initialAssetWrites = await countAssetWrites(() => saveCurrentDraft(DRAFT_SESSION_ID, leaseId, first, firstBaseline, 0));
     const savedFirst = await readCurrentDraft();
     assert(savedFirst?.draft.assetId === first.assetId && savedFirst.draft.revision === 0, 'Initial save must create the current draft.');
     assert(savedFirst.draft.snapshot.document.sourceAssetId === first.assetId, 'Saved snapshot must refer to the saved source.');
@@ -154,17 +163,20 @@ async function runAssertions(): Promise<string[]> {
     const actualStatuses: DraftSaveStatus[] = [];
     const autosave = createDraftAutosave(async (request: { candidate: ImageImportCandidate; snapshot: typeof firstBaseline; revision: number }) => {
       actualSaves.push(request.revision);
-      await saveCurrentDraft(request.candidate, request.snapshot, request.revision);
+      await saveCurrentDraft(DRAFT_SESSION_ID, leaseId, request.candidate, request.snapshot, request.revision);
     }, (status) => actualStatuses.push(status), 60_000);
     autosave.schedule({ candidate: first, snapshot: firstBaseline, revision: 1 });
     autosave.schedule({ candidate: first, snapshot: firstBaseline, revision: 2 });
     autosave.schedule({ candidate: first, snapshot: currentSnapshot(history), revision: history.revision });
     await autosave.flush();
+    const writesAfterFlush = actualSaves.length;
+    await autosave.flush();
+    assert(actualSaves.length === writesAfterFlush, 'Flush after a successful save must not persist the same revision again.');
     autosave.dispose();
     const latest = await readCurrentDraft();
     assert(actualSaves.length === 1 && actualSaves[0] === 3 && latest?.draft.revision === 3, 'Debounce must save only the latest revision.');
     assert(actualStatuses.includes('DIRTY') && actualStatuses.includes('SAVING') && actualStatuses.at(-1) === 'SAVED', 'Autosave must report dirty, saving and saved in order.');
-    const updateAssetWrites = await countAssetWrites(() => saveCurrentDraft(first, currentSnapshot(history), history.revision));
+    const updateAssetWrites = await countAssetWrites(() => saveCurrentDraft(DRAFT_SESSION_ID, leaseId, first, currentSnapshot(history), history.revision));
     assert(updateAssetWrites === 0 && await countAssets() === 1, 'Same-asset updates must not write a second source asset.');
     assert((await readCurrentDraft())?.asset.blob.size === first.source.size, 'Same-asset update must retain the original Blob.');
     passed.push('Debounce coalescing, commit/undo/redo revision and source write-once');
@@ -189,13 +201,13 @@ async function runAssertions(): Promise<string[]> {
     assert(completed.join(',') === '4,5' && savedStatus?.completed.includes(5), 'An older save must not mark a newer revision SAVED.');
     passed.push('A revision change during an in-flight save rejects the stale SAVED result');
 
-    await expectAbort(() => abortDraftSaveForManualCheck(second, secondBaseline, 0));
+    await expectAbort(() => abortDraftSaveForManualCheck(DRAFT_SESSION_ID, leaseId, second, secondBaseline, 0));
     const afterAbort = await readCurrentDraft();
     assert(afterAbort?.asset.id === first.assetId && afterAbort.draft.revision === 3, 'Aborted replacement must preserve the previous draft and source.');
     assert(await countAssets() === 1, 'Aborted replacement must not leave an orphan asset.');
     const errorStatuses: DraftSaveStatus[] = [];
     const failingAutosave = createDraftAutosave(
-      () => abortDraftSaveForManualCheck(second, secondBaseline, 1),
+      () => abortDraftSaveForManualCheck(DRAFT_SESSION_ID, leaseId, second, secondBaseline, 1),
       (status) => errorStatuses.push(status),
       60_000,
     );
@@ -206,7 +218,7 @@ async function runAssertions(): Promise<string[]> {
     assert((await readCurrentDraft())?.asset.id === first.assetId, 'Save error must leave the previous current draft readable.');
     passed.push('Atomic replacement rollback and SAVE_ERROR on an aborted transaction');
 
-    await saveCurrentDraft(second, secondBaseline, 0);
+    await saveCurrentDraft(DRAFT_SESSION_ID, leaseId, second, secondBaseline, 0);
     const replaced = await readCurrentDraft();
     assert(replaced?.asset.id === second.assetId && replaced.draft.assetId === second.assetId, 'Successful replacement must atomically point draft to the new source.');
     assert(await countAssets() === 1, 'Successful replacement must remove the prior source asset.');
@@ -214,6 +226,7 @@ async function runAssertions(): Promise<string[]> {
     passed.push('Successful replacement updates asset and draft in one transaction');
     return passed;
   } finally {
+    await releaseDraftLease(DRAFT_SESSION_ID, leaseId);
     first.dispose();
     second.dispose();
   }

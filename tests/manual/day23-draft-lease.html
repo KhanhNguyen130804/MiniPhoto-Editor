@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Day 23 — Draft lease</title>
+    <style>
+      body { max-width: 760px; margin: 40px auto; padding: 0 20px; font: 16px/1.6 system-ui, sans-serif; color: #172033; }
+      button { padding: 9px 14px; font: inherit; }
+      #results { white-space: pre-wrap; }
+      .warning { padding: 12px; background: #fff7ed; border: 1px solid #fdba74; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Day 23 — Quyền sở hữu bản nháp giữa nhiều tab</h1>
+      <p class="warning">Chỉ chạy tại <code>127.0.0.1:5177</code>. Harness thay và xóa bản nháp trên origin cô lập này.</p>
+      <button id="run" type="button">Chạy kiểm tra IndexedDB</button>
+      <button id="seed-ui" type="button">Chuẩn bị bản nháp cho smoke hai tab</button>
+      <button id="inspect" type="button">Đọc snapshot đang lưu</button>
+      <h2>Kiểm tra thủ công giao diện hai tab</h2>
+      <ol>
+        <li>Mở ứng dụng tại <code>http://127.0.0.1:5177/</code> trong hai tab.</li>
+        <li>Tab A nhập ảnh, chỉnh sửa tới khi đã lưu. Tab B tiếp tục bản nháp đó.</li>
+        <li>Tab B phải báo tab A đang giữ quyền; chỉnh sửa và xuất vẫn dùng được, nhưng không tự lưu.</li>
+        <li>Ở tab B, xác nhận “Lưu phiên này thay bản nháp”; tab B ghi snapshot hiện tại, tab A nhận trạng thái mất quyền và dừng autosave.</li>
+        <li>Chỉnh tiếp ở tab A: tab A vẫn không được ghi đè. Chỉ sau khi xác nhận takeover, tab A mới lưu phiên RAM của nó.</li>
+        <li>Đóng tab đang giữ quyền; tab còn lại được phép takeover sau khi lease được giải phóng. Không cần chờ quá hạn 60 giây.</li>
+      </ol>
+      <h2>Kết quả</h2>
+      <pre id="results" role="status" aria-live="polite">Chưa chạy.</pre>
+    </main>
+    <script type="module" src="/tests/manual/day23-draft-lease.ts"></script>
+  </body>
+</html>

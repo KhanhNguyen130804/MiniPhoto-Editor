@@ -1,5 +1,5 @@
 import { decodeSavedImageAsset, decodeWithFabricUrl } from '../../src/features/editor/engine/imageImport';
-import { abortDraftSaveForManualCheck, deleteCurrentDraft, DRAFT_DATABASE_NAME, inspectCurrentDraft, saveCurrentDraft } from '../../src/features/editor/engine/draftStore';
+import { abortDraftSaveForManualCheck, acquireDraftLease, deleteCurrentDraft, DRAFT_DATABASE_NAME, inspectCurrentDraft, readDraftLease, releaseDraftLease, saveCurrentDraft } from '../../src/features/editor/engine/draftStore';
 import { canUndo, commitHistory, createHistory, currentSnapshot } from '../../src/features/editor/engine/history';
 import { selectImagePreset } from '../../src/features/editor/engine/adjustmentFilters';
 import { createImageBaselineSnapshot, type EditorSnapshot, type ShapeOverlaySnapshot, type TextOverlaySnapshot } from '../../src/features/editor/engine/snapshot';
@@ -11,9 +11,16 @@ const seedButton = document.querySelector<HTMLButtonElement>('#seed-source-only'
 const missingAssetButton = document.querySelector<HTMLButtonElement>('#seed-missing-asset')!;
 const results = document.querySelector<HTMLElement>('#results')!;
 const SIZE = { width: 64, height: 48 };
+const DRAFT_SESSION_ID = crypto.randomUUID();
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(message);
+}
+
+async function claimHarnessLease(): Promise<string> {
+  const claim = await acquireDraftLease(DRAFT_SESSION_ID, await readDraftLease());
+  assert(claim.kind === 'acquired', 'Close other tabs using this isolated draft database before running the harness.');
+  return claim.lease.leaseId;
 }
 
 async function createCandidate(name: string): Promise<ImageImportCandidate> {
@@ -110,9 +117,11 @@ async function runAssertions(): Promise<string[]> {
     scene: [...baseline.scene, text, hiddenShape],
   };
   const passed: string[] = [];
+  let leaseId = '';
 
   try {
-    await saveCurrentDraft(first, snapshot, 8);
+    leaseId = await claimHarnessLease();
+    await saveCurrentDraft(DRAFT_SESSION_ID, leaseId, first, snapshot, 8);
     const ready = await inspectCurrentDraft();
     assert(ready.kind === 'ready' && ready.saved.asset.id === first.assetId, 'A supported snapshot and matching source must be ready to restore.');
     validateEditorSnapshot(ready.saved.draft.snapshot, ready.saved.asset);
@@ -133,7 +142,7 @@ async function runAssertions(): Promise<string[]> {
     restored.dispose();
     passed.push('Supported draft validation, source identity/dimensions and history revision baseline');
 
-    await expectAbort(() => abortDraftSaveForManualCheck(second, createImageBaselineSnapshot(second.assetId, second.width, second.height), 0));
+    await expectAbort(() => abortDraftSaveForManualCheck(DRAFT_SESSION_ID, leaseId, second, createImageBaselineSnapshot(second.assetId, second.width, second.height), 0));
     const afterAbort = await inspectCurrentDraft();
     assert(afterAbort.kind === 'ready' && afterAbort.saved.asset.id === first.assetId && afterAbort.saved.draft.revision === 8,
       'An aborted replacement must preserve the existing draft and source.');
@@ -149,21 +158,22 @@ async function runAssertions(): Promise<string[]> {
     assert((await counts()).assets === 1, 'Inspection and source-only recovery must not auto-delete saved data.');
     passed.push('Unsupported snapshot is retained and exposes a decodable source-only recovery');
 
-    await deleteCurrentDraft();
+    await deleteCurrentDraft(DRAFT_SESSION_ID, leaseId);
     assert((await inspectCurrentDraft()).kind === 'none', 'Discard must remove the current draft.');
     assert((await counts()).assets === 0, 'Discard must remove the draft asset in the same transaction.');
     passed.push('Confirmed-discard store operation removes draft and associated asset');
 
-    await saveCurrentDraft(second, createImageBaselineSnapshot(second.assetId, second.width, second.height), 0);
+    await saveCurrentDraft(DRAFT_SESSION_ID, leaseId, second, createImageBaselineSnapshot(second.assetId, second.width, second.height), 0);
     await removeAsset(second.assetId);
     const missing = await inspectCurrentDraft();
     assert(missing.kind === 'unrecoverable' && missing.assetId === second.assetId, 'A missing source must be reported as unrecoverable.');
     assert((await counts()).drafts === 1, 'Detection of a missing asset must preserve the draft record until explicit discard.');
-    await deleteCurrentDraft();
+    await deleteCurrentDraft(DRAFT_SESSION_ID, leaseId);
     assert((await inspectCurrentDraft()).kind === 'none' && (await counts()).drafts === 0, 'Discard must clear an unrecoverable current draft.');
     passed.push('Missing source remains until explicit discard, then the dangling draft record is removed');
     return passed;
   } finally {
+    await releaseDraftLease(DRAFT_SESSION_ID, leaseId);
     first.dispose();
     second.dispose();
   }
@@ -186,10 +196,13 @@ seedButton.addEventListener('click', async () => {
   try {
     assert((await inspectCurrentDraft()).kind === 'none', 'Discard the existing test draft in the app before seeding another one.');
     const candidate = await createCandidate('day22-recovery-source.png');
+    let leaseId = '';
     try {
-      await saveCurrentDraft(candidate, createImageBaselineSnapshot(candidate.assetId, candidate.width, candidate.height), 0);
+      leaseId = await claimHarnessLease();
+      await saveCurrentDraft(DRAFT_SESSION_ID, leaseId, candidate, createImageBaselineSnapshot(candidate.assetId, candidate.width, candidate.height), 0);
       await updateCurrentDraft((draft) => ({ ...draft, schemaVersion: 99, snapshot: { schemaVersion: 99 } }));
     } finally {
+      if (leaseId) await releaseDraftLease(DRAFT_SESSION_ID, leaseId);
       candidate.dispose();
     }
     results.textContent = 'Đã tạo mẫu snapshot không hỗ trợ. Mở ứng dụng tại / để kiểm tra recovery UI.';
@@ -205,10 +218,13 @@ missingAssetButton.addEventListener('click', async () => {
   try {
     assert((await inspectCurrentDraft()).kind === 'none', 'Discard the existing test draft in the app before seeding another one.');
     const candidate = await createCandidate('day22-missing-asset.png');
+    let leaseId = '';
     try {
-      await saveCurrentDraft(candidate, createImageBaselineSnapshot(candidate.assetId, candidate.width, candidate.height), 0);
+      leaseId = await claimHarnessLease();
+      await saveCurrentDraft(DRAFT_SESSION_ID, leaseId, candidate, createImageBaselineSnapshot(candidate.assetId, candidate.width, candidate.height), 0);
       await removeAsset(candidate.assetId);
     } finally {
+      if (leaseId) await releaseDraftLease(DRAFT_SESSION_ID, leaseId);
       candidate.dispose();
     }
     results.textContent = 'Đã tạo mẫu thiếu asset. Mở ứng dụng tại / để kiểm tra UI chỉ giữ hướng dẫn bỏ draft.';

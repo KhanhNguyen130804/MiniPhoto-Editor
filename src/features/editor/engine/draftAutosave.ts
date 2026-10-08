@@ -35,8 +35,10 @@ export function createDraftAutosave<T>(
       const saving = (async () => {
         try {
           await save(request);
-          if (!disposed && latest === request) onStatus('SAVED');
-          else if (!disposed && latest !== null) onStatus('DIRTY');
+          if (!disposed && latest === request) {
+            onStatus('SAVED');
+            latest = null;
+          } else if (!disposed && latest !== null) onStatus('DIRTY');
         } catch {
           if (!disposed && latest === request) onStatus('SAVE_ERROR');
           else if (!disposed && latest !== null) onStatus('DIRTY');

@@ -35,7 +35,20 @@ import { calculateResize, type ResizeAxis, type ResizeDimensions, type ResizeErr
 import { exportImage, type ExportFormat } from './features/editor/engine/exportImage';
 import { selectImagePreset, type ImageAdjustments } from './features/editor/engine/adjustmentFilters';
 import { createDraftAutosave, type DraftAutosaveController, type DraftSaveStatus } from './features/editor/engine/draftAutosave';
-import { deleteCurrentDraft, inspectCurrentDraft, saveCurrentDraft, type CurrentDraftInspection, type SavedCurrentDraft } from './features/editor/engine/draftStore';
+import {
+  acquireDraftLease,
+  DRAFT_LEASE_HEARTBEAT_MS,
+  deleteCurrentDraft,
+  DraftLeaseError,
+  inspectCurrentDraft,
+  readDraftLease,
+  releaseDraftLease,
+  renewDraftLease,
+  saveCurrentDraft,
+  type CurrentDraftInspection,
+  type DraftLeaseRecord,
+  type SavedCurrentDraft,
+} from './features/editor/engine/draftStore';
 import {
   createCropRect,
   CROP_RATIOS,
@@ -52,7 +65,7 @@ type TextNumericField = 'x' | 'y' | 'angle' | 'width' | 'fontSize';
 type ShapeNumericField = 'strokeWidth';
 type PendingCrop = { ratio: CropRatio; rect: CropRect };
 type CropFields = Record<keyof CropRect, string>;
-type DraftSaveRequest = { candidate: ImageImportCandidate; snapshot: EditorSnapshot; revision: number };
+type DraftSaveRequest = { candidate: ImageImportCandidate; leaseId: string; snapshot: EditorSnapshot; revision: number };
 type PendingResize = {
   base: ResizeDimensions;
   fields: Record<ResizeAxis, string>;
@@ -63,7 +76,17 @@ type PendingResize = {
 };
 type AdjustmentField = keyof ImageAdjustments;
 type DraftViewState = CurrentDraftInspection | { kind: 'checking' } | { kind: 'error'; reason: string };
-type DraftConfirmation = 'replace' | 'discard' | 'source-only' | null;
+type DraftConfirmation = 'replace' | 'discard' | 'source-only' | 'takeover' | null;
+type DraftLeaseView =
+  | { kind: 'inactive' | 'checking' }
+  | { kind: 'owner'; lease: DraftLeaseRecord }
+  | { kind: 'held' | 'lost' | 'error'; lease: DraftLeaseRecord | null };
+
+function observedLeaseView(lease: DraftLeaseRecord | null): DraftLeaseView {
+  return lease && lease.leaseExpiresAt > Date.now()
+    ? { kind: 'held', lease }
+    : { kind: 'lost', lease };
+}
 
 const ADJUSTMENT_FIELDS: readonly AdjustmentField[] = ['brightness', 'contrast', 'saturation'];
 const ADJUSTMENT_LABELS: Record<AdjustmentField, string> = {
@@ -474,6 +497,8 @@ function EditorPage({
   replaceButtonRef,
   detachImageRef,
   draftSaveStatus,
+  draftLease,
+  onTakeOverDraft,
 }: {
   candidate: ImageImportCandidate;
   snapshot: EditorSnapshot;
@@ -493,6 +518,8 @@ function EditorPage({
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
   draftSaveStatus: DraftSaveStatus;
+  draftLease: DraftLeaseView;
+  onTakeOverDraft: (event: MouseEvent<HTMLButtonElement>) => void;
 }) {
   const tools = ['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'];
   const canvasActionsRef = useRef<EditorCanvasHandle>(null);
@@ -1776,6 +1803,19 @@ function EditorPage({
                   : draftSaveStatus === 'SAVED' ? 'Đã lưu trên thiết bị'
                   : 'Chưa lưu được bản nháp'}
         </span>
+        {draftLease.kind !== 'owner' && (
+          <span className="editor-statusbar__lease" role="status" aria-live="polite">
+            {draftLease.kind === 'checking' ? 'Đang kiểm tra quyền lưu…'
+              : draftLease.kind === 'held' ? 'Tab khác đang giữ quyền lưu; thay đổi ở đây chưa được tự lưu.'
+                : draftLease.kind === 'error' ? 'Không kiểm tra được quyền lưu; thay đổi ở đây chưa được tự lưu.'
+                  : 'Tab này không còn quyền lưu; thay đổi ở đây chưa được tự lưu.'}
+            {(draftLease.kind === 'held' || draftLease.kind === 'lost' || draftLease.kind === 'error') && (
+              <button type="button" className="editor-statusbar__takeover" onClick={onTakeOverDraft}>
+                Lưu phiên này thay bản nháp
+              </button>
+            )}
+          </span>
+        )}
         <a href="/privacy">Quyền riêng tư</a>
       </footer>
 
@@ -1925,12 +1965,14 @@ function NotFoundPage() {
 
 export default function App() {
   const [route, setRoute] = useState<Route>(currentRoute);
+  const [draftSessionId] = useState(() => crypto.randomUUID());
   const state = previewState();
   const [candidate, setCandidate] = useState<ImageImportCandidate | null>(null);
   const [editorHistory, setEditorHistory] = useState<HistoryState<EditorSnapshot> | null>(null);
   const [pendingCandidate, setPendingCandidate] = useState<ImageImportCandidate | null>(null);
   const [importStatus, setImportStatus] = useState<ImportStatus>(idleImportStatus);
   const [draftSaveStatus, setDraftSaveStatus] = useState<DraftSaveStatus>('NOT_SAVED');
+  const [draftLease, setDraftLease] = useState<DraftLeaseView>({ kind: 'inactive' });
   const [draftInspection, setDraftInspection] = useState<DraftViewState>({ kind: 'checking' });
   const [draftBusy, setDraftBusy] = useState(false);
   const [confirmation, setConfirmation] = useState<DraftConfirmation>(null);
@@ -1948,13 +1990,49 @@ export default function App() {
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const detachImageRef = useRef<((image: FabricImage) => void) | null>(null);
   const draftAutosaveRef = useRef<DraftAutosaveController<DraftSaveRequest> | null>(null);
+  const autosaveSnapshotRef = useRef<{ candidate: ImageImportCandidate | null; revision: number | null }>({ candidate: null, revision: null });
+  const draftLeaseRef = useRef<DraftLeaseView>(draftLease);
+  const draftLeaseChannelRef = useRef<BroadcastChannel | null>(null);
+  const confirmedLeaseRef = useRef<DraftLeaseRecord | null>(null);
   const skipNextAutosaveRef = useRef(false);
   const routeRef = useRef(route);
   routeRef.current = route;
+  draftLeaseRef.current = draftLease;
   const editorSnapshot = useMemo(
     () => editorHistory ? currentSnapshot(editorHistory) : null,
     [editorHistory],
   );
+
+  const updateDraftLease = (next: DraftLeaseView) => {
+    draftLeaseRef.current = next;
+    setDraftLease(next);
+  };
+
+  const announceDraftLeaseChange = () => {
+    draftLeaseChannelRef.current?.postMessage({ type: 'draft-lease-change' });
+  };
+
+  const checkDraftLease = async () => {
+    const current = draftLeaseRef.current;
+    if (!activeCandidateRef.current || current.kind === 'inactive' || current.kind === 'checking') return;
+    try {
+      if (current.kind === 'owner') {
+        const renewed = await renewDraftLease(draftSessionId, current.lease.leaseId);
+        if (renewed) {
+          updateDraftLease({ kind: 'owner', lease: renewed });
+          return;
+        }
+      }
+      updateDraftLease(observedLeaseView(await readDraftLease()));
+    } catch {
+      updateDraftLease({
+        kind: 'error',
+        lease: current.kind === 'owner' || current.kind === 'held' || current.kind === 'lost' || current.kind === 'error'
+          ? current.lease
+          : null,
+      });
+    }
+  };
 
   const navigateTo = (path: string, replace = false) => {
     if (replace) window.history.replaceState({}, '', path);
@@ -2122,13 +2200,34 @@ export default function App() {
 
   const restoreSavedDraft = async (useSnapshot: boolean) => {
     if ((draftInspection.kind !== 'ready' && draftInspection.kind !== 'source-only') || restoreControllerRef.current) return false;
-    const saved: SavedCurrentDraft = draftInspection.saved;
     const controller = new AbortController();
     const generation = ++restoreGenerationRef.current;
     restoreControllerRef.current = controller;
     setDraftBusy(true);
     let restored: ImageImportCandidate | undefined;
+    let saved: SavedCurrentDraft | undefined;
+    let unusedLeaseId: string | null = null;
     try {
+      try {
+        const claim = await acquireDraftLease(draftSessionId);
+        if (claim.kind === 'acquired') {
+          updateDraftLease({ kind: 'owner', lease: claim.lease });
+          announceDraftLeaseChange();
+          unusedLeaseId = claim.lease.leaseId;
+        } else if (claim.kind === 'held') {
+          updateDraftLease({ kind: 'held', lease: claim.lease });
+        } else {
+          updateDraftLease({ kind: 'lost', lease: claim.lease ?? null });
+        }
+      } catch {
+        updateDraftLease({ kind: 'error', lease: null });
+      }
+      const latest = await inspectCurrentDraft();
+      if (latest.kind !== 'ready' && latest.kind !== 'source-only') {
+        setDraftInspection(latest);
+        return false;
+      }
+      saved = latest.saved;
       restored = await decodeSavedImageAsset(saved.asset, controller.signal);
       if (controller.signal.aborted || generation !== restoreGenerationRef.current) return false;
       let snapshot: EditorSnapshot;
@@ -2142,6 +2241,7 @@ export default function App() {
       const revision = Number.isSafeInteger(saved.draft.revision) && saved.draft.revision >= 0 ? saved.draft.revision : 0;
       activateCandidate(restored, { snapshot, revision, saved: useSnapshot });
       restored = undefined;
+      unusedLeaseId = null;
       setImportStatus(idleImportStatus);
       navigateTo('/editor');
       if (confirmation) {
@@ -2156,15 +2256,22 @@ export default function App() {
       restored = undefined;
       if (controller.signal.aborted || generation !== restoreGenerationRef.current) return false;
       const reason = error instanceof Error ? error.message : 'Không thể khôi phục bản nháp.';
-      if (error instanceof ImageImportError) {
+      if (error instanceof ImageImportError && saved) {
         setDraftInspection({ kind: 'unrecoverable', assetId: saved.asset.id, reason: `Không thể đọc ảnh nguồn: ${reason}` });
-      } else {
+      } else if (saved) {
         setDraftInspection({ kind: 'source-only', saved, reason: `Không thể khôi phục các chỉnh sửa: ${reason}` });
+      } else {
+        setDraftInspection({ kind: 'error', reason });
       }
       if (confirmation) setConfirmationError(reason);
       return false;
     } finally {
       restored?.dispose();
+      if (unusedLeaseId) {
+        await releaseDraftLease(draftSessionId, unusedLeaseId).catch(() => undefined);
+        if (draftLeaseRef.current.kind === 'owner') updateDraftLease({ kind: 'inactive' });
+        announceDraftLeaseChange();
+      }
       if (restoreControllerRef.current === controller) {
         restoreControllerRef.current = null;
         setDraftBusy(false);
@@ -2183,18 +2290,76 @@ export default function App() {
     setConfirmationError('');
     setConfirmation('discard');
   };
+  const askTakeOverDraft = (event: MouseEvent<HTMLButtonElement>) => {
+    const current = draftLeaseRef.current;
+    if (current.kind !== 'held' && current.kind !== 'lost' && current.kind !== 'error') return;
+    returnFocusRef.current = event.currentTarget;
+    confirmedLeaseRef.current = current.lease;
+    setConfirmationError('');
+    setConfirmation('takeover');
+  };
+
+  const finishConfirmation = () => {
+    setConfirmation(null);
+    setConfirmationError('');
+    if (dialogRef.current?.open) dialogRef.current.close();
+    focusAfterDialog();
+  };
+
   const confirmDiscardDraft = async () => {
     setConfirmationBusy(true);
     setConfirmationError('');
     try {
-      await deleteCurrentDraft();
+      const observed = await readDraftLease();
+      const claim = await acquireDraftLease(draftSessionId, observed);
+      if (claim.kind !== 'acquired') {
+        updateDraftLease(claim.kind === 'held'
+          ? { kind: 'held', lease: claim.lease }
+          : { kind: 'lost', lease: claim.lease ?? null });
+        throw new Error('Quyền lưu đã thay đổi. Hãy kiểm tra lại rồi xác nhận bỏ bản nháp lần nữa.');
+      }
+      updateDraftLease({ kind: 'owner', lease: claim.lease });
+      announceDraftLeaseChange();
+      await deleteCurrentDraft(draftSessionId, claim.lease.leaseId);
+      await releaseDraftLease(draftSessionId, claim.lease.leaseId);
+      updateDraftLease({ kind: 'inactive' });
+      announceDraftLeaseChange();
       setDraftInspection({ kind: 'none' });
-      setConfirmation(null);
       returnFocusRef.current = null;
-      if (dialogRef.current?.open) dialogRef.current.close();
-      focusAfterDialog();
+      finishConfirmation();
     } catch (error) {
       setConfirmationError(error instanceof Error ? error.message : 'Không thể bỏ bản nháp.');
+    } finally {
+      setConfirmationBusy(false);
+    }
+  };
+
+  const confirmTakeOverDraft = async () => {
+    const currentCandidate = activeCandidateRef.current;
+    if (!currentCandidate || !editorHistory) return;
+    setConfirmationBusy(true);
+    setConfirmationError('');
+    draftAutosaveRef.current?.cancel();
+    try {
+      const claim = await acquireDraftLease(draftSessionId, confirmedLeaseRef.current);
+      if (claim.kind !== 'acquired') {
+        updateDraftLease(claim.kind === 'held'
+          ? { kind: 'held', lease: claim.lease }
+          : { kind: 'lost', lease: claim.lease ?? null });
+        confirmedLeaseRef.current = claim.kind === 'held' ? claim.lease : claim.lease ?? null;
+        throw new Error('Quyền lưu đã thay đổi. Hãy kiểm tra thông báo rồi xác nhận lại.');
+      }
+      skipNextAutosaveRef.current = true;
+      updateDraftLease({ kind: 'owner', lease: claim.lease });
+      announceDraftLeaseChange();
+      await saveCurrentDraft(draftSessionId, claim.lease.leaseId, currentCandidate, currentSnapshot(editorHistory), editorHistory.revision);
+      if (activeCandidateRef.current === currentCandidate) setDraftInspection({ kind: 'none' });
+      setDraftSaveStatus('SAVED');
+      finishConfirmation();
+    } catch (error) {
+      setDraftSaveStatus('SAVE_ERROR');
+      if (error instanceof DraftLeaseError) await checkDraftLease();
+      setConfirmationError(error instanceof Error ? error.message : 'Không thể lưu phiên hiện tại.');
     } finally {
       setConfirmationBusy(false);
     }
@@ -2205,9 +2370,64 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!candidate || draftLeaseRef.current.kind !== 'inactive') return;
+    updateDraftLease({ kind: 'checking' });
+    void acquireDraftLease(draftSessionId).then((claim) => {
+      if (claim.kind === 'acquired') {
+        updateDraftLease({ kind: 'owner', lease: claim.lease });
+        announceDraftLeaseChange();
+      } else if (claim.kind === 'held') {
+        updateDraftLease({ kind: 'held', lease: claim.lease });
+      } else {
+        updateDraftLease({ kind: 'lost', lease: claim.lease ?? null });
+      }
+    }).catch(() => updateDraftLease({ kind: 'error', lease: null }));
+  }, [candidate]);
+
+  useEffect(() => {
+    const channel = typeof BroadcastChannel === 'undefined' ? null : new BroadcastChannel('miniphoto-draft-lease');
+    draftLeaseChannelRef.current = channel;
+    if (channel) {
+      channel.onmessage = (event: MessageEvent<unknown>) => {
+        if (typeof event.data === 'object' && event.data !== null
+          && (event.data as { type?: unknown }).type === 'draft-lease-change') void checkDraftLease();
+      };
+    }
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'visible') void checkDraftLease();
+    };
+    const onPageHide = () => {
+      const current = draftLeaseRef.current;
+      if (current.kind !== 'owner') return;
+      void (async () => {
+        await draftAutosaveRef.current?.flush();
+        await releaseDraftLease(draftSessionId, current.lease.leaseId);
+        announceDraftLeaseChange();
+      })().catch(() => undefined);
+    };
+    const heartbeat = window.setInterval(() => {
+      if (document.visibilityState === 'visible') void checkDraftLease();
+    }, DRAFT_LEASE_HEARTBEAT_MS);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('pagehide', onPageHide);
+    return () => {
+      window.clearInterval(heartbeat);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('pagehide', onPageHide);
+      channel?.close();
+      if (draftLeaseChannelRef.current === channel) draftLeaseChannelRef.current = null;
+    };
+  }, [draftSessionId]);
+
+  useEffect(() => {
     const autosave = createDraftAutosave<DraftSaveRequest>(
-      async ({ candidate: currentCandidate, snapshot, revision }) => {
-        await saveCurrentDraft(currentCandidate, snapshot, revision);
+      async ({ candidate: currentCandidate, leaseId, snapshot, revision }) => {
+        try {
+          await saveCurrentDraft(draftSessionId, leaseId, currentCandidate, snapshot, revision);
+        } catch (error) {
+          if (error instanceof DraftLeaseError) void checkDraftLease();
+          throw error;
+        }
         if (activeCandidateRef.current === currentCandidate) setDraftInspection({ kind: 'none' });
       },
       setDraftSaveStatus,
@@ -2225,17 +2445,26 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const snapshotChanged = autosaveSnapshotRef.current.candidate !== candidate
+      || autosaveSnapshotRef.current.revision !== (editorHistory?.revision ?? null);
+    autosaveSnapshotRef.current = { candidate, revision: editorHistory?.revision ?? null };
     if (!candidate || !editorSnapshot || !editorHistory) {
       draftAutosaveRef.current?.cancel();
       setDraftSaveStatus('NOT_SAVED');
+      return;
+    }
+    if (draftLease.kind !== 'owner') {
+      draftAutosaveRef.current?.cancel();
+      if (skipNextAutosaveRef.current) skipNextAutosaveRef.current = false;
+      else if (snapshotChanged) setDraftSaveStatus('DIRTY');
       return;
     }
     if (skipNextAutosaveRef.current) {
       skipNextAutosaveRef.current = false;
       return;
     }
-    draftAutosaveRef.current?.schedule({ candidate, snapshot: editorSnapshot, revision: editorHistory.revision });
-  }, [candidate, editorHistory, editorSnapshot]);
+    draftAutosaveRef.current?.schedule({ candidate, leaseId: draftLease.lease.leaseId, snapshot: editorSnapshot, revision: editorHistory.revision });
+  }, [candidate, draftLease.kind, editorHistory, editorSnapshot]);
 
   useEffect(() => {
     if (route === 'editor' && !candidate && draftInspection.kind === 'none') {
@@ -2358,6 +2587,8 @@ export default function App() {
           onChoose={openFilePicker}
           replaceButtonRef={editorReplaceButtonRef}
           detachImageRef={detachImageRef}
+          draftLease={draftLease}
+          onTakeOverDraft={askTakeOverDraft}
         />
       )}
       {displayRoute === 'privacy' && <PrivacyPage />}
@@ -2386,20 +2617,23 @@ export default function App() {
           cancelPendingReplacement();
         }}
       >
-        <p className="eyebrow">{confirmation === 'discard' ? 'BỎ BẢN NHÁP' : confirmation === 'source-only' ? 'KHÔI PHỤC ẢNH NGUỒN' : 'THAY ẢNH'}</p>
+        <p className="eyebrow">{confirmation === 'discard' ? 'BỎ BẢN NHÁP' : confirmation === 'source-only' ? 'KHÔI PHỤC ẢNH NGUỒN' : confirmation === 'takeover' ? 'LƯU PHIÊN NÀY' : 'THAY ẢNH'}</p>
         <h2 id="replace-dialog-title">
           {confirmation === 'discard' ? 'Bỏ bản nháp đã lưu?'
             : confirmation === 'source-only' ? 'Mở ảnh nguồn, bỏ các chỉnh sửa?'
-              : candidate ? 'Thay ảnh đang mở?' : 'Thay bản nháp đã lưu?'}
+              : confirmation === 'takeover' ? 'Thay bản nháp bằng phiên này?'
+                : candidate ? 'Thay ảnh đang mở?' : 'Thay bản nháp đã lưu?'}
         </h2>
         <p id="replace-dialog-copy">
           {confirmation === 'discard'
             ? 'Ảnh nguồn và snapshot chỉnh sửa sẽ bị xóa khỏi bộ nhớ cục bộ của ứng dụng.'
             : confirmation === 'source-only'
               ? 'Ảnh nguồn sẽ được mở với trạng thái ban đầu. Các chỉnh sửa không thể khôi phục; bản nháp cũ được giữ cho tới khi trạng thái mới lưu thành công.'
-              : candidate
-                ? `Ảnh hiện tại “${candidate.source.name}” sẽ được thay bằng “${pendingCandidate?.source.name}”.`
-                : `Ảnh mới “${pendingCandidate?.source.name}” sẽ thay bản nháp “${draftInspection.kind === 'ready' || draftInspection.kind === 'source-only' ? draftInspection.saved.asset.originalFileName : 'không thể khôi phục'}”. Bản nháp cũ chỉ bị thay khi trạng thái mới lưu thành công.`}
+              : confirmation === 'takeover'
+                ? 'Ảnh nguồn và snapshot đang mở trong tab này sẽ thay bản nháp hiện tại trên thiết bị. Tab khác sẽ mất quyền tự lưu; các thay đổi trong phiên này sẽ được ghi ngay sau khi giành quyền lưu.'
+                : candidate
+                  ? `Ảnh hiện tại “${candidate.source.name}” sẽ được thay bằng “${pendingCandidate?.source.name}”.`
+                  : `Ảnh mới “${pendingCandidate?.source.name}” sẽ thay bản nháp “${draftInspection.kind === 'ready' || draftInspection.kind === 'source-only' ? draftInspection.saved.asset.originalFileName : 'không thể khôi phục'}”. Bản nháp cũ chỉ bị thay khi trạng thái mới lưu thành công.`}
         </p>
         {confirmationError && <p className="replace-dialog__error" role="alert">{confirmationError}</p>}
         <div className="replace-dialog__actions">
@@ -2414,9 +2648,10 @@ export default function App() {
               if (confirmation === 'replace') confirmReplacement();
               else if (confirmation === 'discard') void confirmDiscardDraft();
               else if (confirmation === 'source-only') void restoreSavedDraft(false);
+              else if (confirmation === 'takeover') void confirmTakeOverDraft();
             }}
           >
-            {confirmation === 'replace' ? 'Thay ảnh' : confirmation === 'discard' ? 'Bỏ bản nháp' : 'Mở ảnh nguồn'}
+            {confirmation === 'replace' ? 'Thay ảnh' : confirmation === 'discard' ? 'Bỏ bản nháp' : confirmation === 'source-only' ? 'Mở ảnh nguồn' : 'Lưu phiên này'}
           </button>
         </div>
       </dialog>

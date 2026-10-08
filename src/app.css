@@ -987,7 +987,7 @@ button:disabled {
 .editor-shell {
   display: grid;
   min-height: 100vh;
-  grid-template-rows: 68px minmax(0, 1fr) 36px;
+  grid-template-rows: 68px minmax(0, 1fr) auto;
   background: var(--editor-bg);
   color: var(--editor-ink);
 }
@@ -2070,10 +2070,12 @@ button:disabled {
 
 .editor-statusbar {
   display: flex;
+  min-height: 36px;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 0 18px;
+  padding: 4px 18px;
   border-top: 1px solid #374151;
   background: #151d2b;
   color: var(--editor-muted);
@@ -2084,6 +2086,32 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.editor-statusbar__lease {
+  display: flex;
+  flex: 1 1 100%;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #fbbf24;
+  text-align: center;
+}
+
+.editor-statusbar__takeover {
+  padding: 3px 8px;
+  border: 1px solid #64748b;
+  border-radius: 6px;
+  background: #1e293b;
+  color: #f8fafc;
+  font: inherit;
+  cursor: pointer;
+}
+
+.editor-statusbar__takeover:focus-visible {
+  outline: 2px solid #93c5fd;
+  outline-offset: 2px;
 }
 
 .editor-statusbar a {
@@ -2189,7 +2217,7 @@ button:disabled {
 
   .editor-shell {
     min-height: 100svh;
-    grid-template-rows: 64px minmax(0, 1fr) 36px;
+    grid-template-rows: 64px minmax(0, 1fr) auto;
   }
 
   .editor-layout {
@@ -2397,7 +2425,7 @@ button:disabled {
   }
 
   .editor-shell {
-    grid-template-rows: auto minmax(0, 1fr) 36px;
+    grid-template-rows: auto minmax(0, 1fr) auto;
   }
 
   .editor-topbar {
