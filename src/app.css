@@ -1524,7 +1524,47 @@ button:disabled {
   font: 13px/1.45 "Noto Sans", sans-serif;
 }
 
+.text-controls select,
+.text-controls input[type="number"] {
+  width: 100%;
+  min-width: 0;
+  min-height: 34px;
+  padding: 6px 8px;
+  border: 1px solid #475569;
+  border-radius: 7px;
+  background: #111b2b;
+  color: #f8fafc;
+  font: 12px "Noto Sans", sans-serif;
+}
+
+.text-controls input[type="color"] {
+  width: 100%;
+  min-height: 34px;
+  padding: 3px;
+  border: 1px solid #475569;
+  border-radius: 7px;
+  background: #111b2b;
+}
+
+.text-controls input[type="range"] {
+  width: 100%;
+  accent-color: #60a5fa;
+}
+
+.text-controls__grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.text-controls__grid--four {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 .text-controls textarea:focus-visible,
+.text-controls input:focus-visible,
+.text-controls select:focus-visible,
 .text-controls button:focus-visible {
   outline: 2px solid #60a5fa;
   outline-offset: 2px;
@@ -1552,6 +1592,12 @@ button:disabled {
   opacity: 0.55;
 }
 
+.text-controls__actions button[aria-pressed="true"] {
+  border-color: #60a5fa;
+  background: #1d4ed8;
+  color: #ffffff;
+}
+
 .text-controls__count,
 .text-controls__error {
   margin: 0;
@@ -1562,6 +1608,15 @@ button:disabled {
 .text-controls__error {
   color: #fca5a5;
   line-height: 1.45;
+}
+
+.text-controls__error button {
+  margin-left: 6px;
+  border: 0;
+  background: transparent;
+  color: #bfdbfe;
+  font: inherit;
+  text-decoration: underline;
 }
 
 .adjustment-controls__intro strong {

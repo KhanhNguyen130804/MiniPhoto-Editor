@@ -21,7 +21,7 @@ import {
   type ImageImportCandidate,
 } from './features/editor/engine/imageImport';
 import { createImageBaselineSnapshot, MAX_TEXT_CODE_POINTS, normalizeTextContent, type EditorSnapshot, type PresetId } from './features/editor/engine/snapshot';
-import { ensureTextFontReady } from './features/editor/engine/text';
+import { ensureTextFontReady, validateTextPropertiesPatch, type TextProperties, type TextPropertiesPatch } from './features/editor/engine/text';
 import {
   cropDocument as cropEditorDocument,
   resizeDocument as resizeEditorDocument,
@@ -43,6 +43,7 @@ import {
 type PreviewState = 'empty' | 'loading' | 'error';
 type Route = 'home' | 'editor' | 'privacy' | 'not-found';
 type ImportStatus = { phase: 'idle' | 'loading' } | { phase: 'error'; message: string };
+type TextNumericField = 'x' | 'y' | 'angle' | 'width' | 'fontSize';
 type PendingCrop = { ratio: CropRatio; rect: CropRect };
 type CropFields = Record<keyof CropRect, string>;
 type PendingResize = {
@@ -410,9 +411,13 @@ function EditorPage({
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [textToolOpen, setTextToolOpen] = useState(false);
-  const [selectedText, setSelectedText] = useState<{ id: string; text: string; isNew: boolean } | null>(null);
+  const [selectedText, setSelectedText] = useState<{ id: string; text: string; isNew: boolean; properties: TextProperties } | null>(null);
   const [textError, setTextError] = useState('');
   const [textFontError, setTextFontError] = useState('');
+  const [textFontLoading, setTextFontLoading] = useState(false);
+  const [textPropertyInputs, setTextPropertyInputs] = useState<Partial<Record<TextNumericField, string>>>({});
+  const textPropertyErrorRef = useRef('');
+  const textFontRetryRef = useRef<TextPropertiesPatch | null>(null);
   const [adjustmentPreview, setAdjustmentPreview] = useState<ImageAdjustments | null>(null);
   const [adjustmentOperationActive, setAdjustmentOperationActive] = useState(false);
   const [adjustmentInputs, setAdjustmentInputs] = useState<Partial<Record<AdjustmentField, string>>>({});
@@ -422,12 +427,25 @@ function EditorPage({
   const latestSnapshotRef = useRef(snapshot);
   latestSnapshotRef.current = snapshot;
 
-  const handleTextSelected = (id: string | null, text = '', isNew = false) => {
+  const handleTextSelected = (id: string | null, text = '', isNew = false, properties?: TextProperties, cancelled = false) => {
+    if (cancelled || !id) {
+      setTextPropertyInputs({});
+      textPropertyErrorRef.current = '';
+      setTextError('');
+    }
     if (!id) {
       setSelectedText(null);
       return;
     }
-    setSelectedText({ id, text, isNew });
+    setSelectedText((current) => ({
+      id,
+      text,
+      isNew,
+      properties: properties ?? (current?.id === id ? current.properties : {
+        x: 0, y: 0, angle: 0, width: 1, fontFamily: 'Noto Sans', fontSize: 8,
+        fontWeight: 400, fontStyle: 'normal', textAlign: 'left', fill: '#111827', opacity: 1,
+      }),
+    }));
     setTextToolOpen(true);
     setAdjustmentOpen(false);
     setFilterOpen(false);
@@ -436,6 +454,71 @@ function EditorPage({
 
   const handleTextDraftChange = (id: string, text: string) => {
     setSelectedText((current) => current?.id === id ? { ...current, text } : current);
+  };
+
+  const beginTextPropertyOperation = (id = selectedText?.id): boolean => {
+    if (!id || textFontLoading) return false;
+    const began = canvasActionsRef.current?.beginTextPropertiesEdit(id) ?? false;
+    if (began) {
+      textPropertyErrorRef.current = '';
+      setTextError('');
+    }
+    return began;
+  };
+
+  const finishTextPropertyOperation = () => {
+    if (textPropertyErrorRef.current) {
+      canvasActionsRef.current?.cancelTextEdit();
+      textPropertyErrorRef.current = '';
+      setTextPropertyInputs({});
+      setTextError('');
+      return false;
+    }
+    const finished = canvasActionsRef.current?.finishTextEdit() ?? true;
+    setTextPropertyInputs({});
+    return finished;
+  };
+
+  const changeTextProperties = (patch: TextPropertiesPatch) => {
+    const selected = selectedText;
+    if (!selected || !beginTextPropertyOperation(selected.id)) return;
+    const fontChange = patch.fontFamily !== undefined || patch.fontStyle !== undefined || patch.fontWeight !== undefined;
+    textFontRetryRef.current = fontChange ? patch : null;
+    setTextFontError('');
+    if (fontChange) setTextFontLoading(true);
+    void canvasActionsRef.current?.setTextProperties(selected.id, patch).then((applied) => {
+      if (applied) canvasActionsRef.current?.finishTextEdit();
+    }).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Không thể áp dụng thuộc tính chữ.';
+      canvasActionsRef.current?.cancelTextEdit();
+      if (fontChange) setTextFontError(`${message} Kiểu chữ cũ vẫn được giữ; hãy thử lại hoặc chọn kiểu khác.`);
+      else setTextError(message);
+    }).finally(() => {
+      if (fontChange) setTextFontLoading(false);
+    });
+  };
+
+  const changeContinuousTextProperty = (field: TextNumericField, rawValue: string) => {
+    setTextPropertyInputs((current) => ({ ...current, [field]: rawValue }));
+    const patch = { [field]: Number(rawValue) } as TextPropertiesPatch;
+    try {
+      if (!rawValue.trim()) throw new RangeError('Nhập một giá trị số hợp lệ.');
+      validateTextPropertiesPatch(patch);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Giá trị thuộc tính chữ không hợp lệ.';
+      textPropertyErrorRef.current = message;
+      setTextError(message);
+      return;
+    }
+    textPropertyErrorRef.current = '';
+    setTextError('');
+    const selected = selectedText;
+    if (!selected || !beginTextPropertyOperation(selected.id)) return;
+    void canvasActionsRef.current?.setTextProperties(selected.id, patch).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : 'Giá trị thuộc tính chữ không hợp lệ.';
+      textPropertyErrorRef.current = message;
+      setTextError(message);
+    });
   };
 
   const addText = async () => {
@@ -803,7 +886,7 @@ function EditorPage({
   };
   const activeTool = cropPending ? 'Cắt' : resizePending ? 'Kích thước'
     : filterOpen ? 'Bộ lọc' : adjustmentOpen ? 'Điều chỉnh' : textToolOpen ? 'Chữ' : null;
-  const documentActionLocked = exportBusy || Boolean(cropPending || resizePending || adjustmentOperationActive);
+  const documentActionLocked = exportBusy || textFontLoading || Boolean(cropPending || resizePending || adjustmentOperationActive);
   const displayedAdjustments = adjustmentPreview ?? snapshotAdjustments(snapshot);
   const previewCanvasSnapshot = previewSnapshot;
 
@@ -1091,23 +1174,100 @@ function EditorPage({
                 </button>
               </div>
               {selectedText ? (
-                <label className="text-controls__field" htmlFor="selected-text-content">
-                  Nội dung
-                  <textarea
-                    id="selected-text-content"
-                    ref={textAreaRef}
-                    rows={3}
-                    value={selectedText.text}
-                    aria-describedby="selected-text-count"
-                    onFocus={() => canvasActionsRef.current?.beginTextareaEdit(selectedText.id)}
-                    onBlur={() => canvasActionsRef.current?.finishTextEdit()}
-                    onChange={(event) => {
-                      const text = normalizeTextContent(event.currentTarget.value);
-                      setSelectedText((current) => current?.id === selectedText.id ? { ...current, text } : current);
-                      canvasActionsRef.current?.setTextDraft(selectedText.id, text);
-                    }}
-                  />
-                </label>
+                <>
+                  <label className="text-controls__field" htmlFor="selected-text-content">
+                    Nội dung
+                    <textarea
+                      id="selected-text-content"
+                      ref={textAreaRef}
+                      rows={3}
+                      value={selectedText.text}
+                      aria-describedby="selected-text-count"
+                      onFocus={() => canvasActionsRef.current?.beginTextareaEdit(selectedText.id)}
+                      onBlur={() => canvasActionsRef.current?.finishTextEdit()}
+                      onChange={(event) => {
+                        const text = normalizeTextContent(event.currentTarget.value);
+                        setSelectedText((current) => current?.id === selectedText.id ? { ...current, text } : current);
+                        canvasActionsRef.current?.setTextDraft(selectedText.id, text);
+                      }}
+                    />
+                  </label>
+                  <div className="text-controls__grid">
+                    <label className="text-controls__field" htmlFor="selected-text-font">
+                      Font
+                      <select id="selected-text-font" value={selectedText.properties.fontFamily} disabled={documentActionLocked}
+                        onChange={(event) => changeTextProperties({ fontFamily: event.currentTarget.value as TextProperties['fontFamily'] })}>
+                        <option value="Noto Sans">Noto Sans</option>
+                        <option value="Noto Serif">Noto Serif</option>
+                      </select>
+                    </label>
+                    <label className="text-controls__field" htmlFor="selected-text-size">
+                      Cỡ chữ (px)
+                      <input id="selected-text-size" type="number" min="8" max="512" step="1"
+                        value={textPropertyInputs.fontSize ?? String(selectedText.properties.fontSize)} disabled={documentActionLocked}
+                        onFocus={() => beginTextPropertyOperation(selectedText.id)}
+                        onChange={(event) => changeContinuousTextProperty('fontSize', event.currentTarget.value)}
+                        onBlur={finishTextPropertyOperation}
+                        onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} />
+                    </label>
+                  </div>
+                  <div className="text-controls__actions" aria-label="Kiểu chữ">
+                    <button type="button" aria-pressed={selectedText.properties.fontWeight === 700} disabled={documentActionLocked}
+                      onClick={() => changeTextProperties({ fontWeight: selectedText.properties.fontWeight === 700 ? 400 : 700 })}>Đậm</button>
+                    <button type="button" aria-pressed={selectedText.properties.fontStyle === 'italic'} disabled={documentActionLocked}
+                      onClick={() => changeTextProperties({ fontStyle: selectedText.properties.fontStyle === 'italic' ? 'normal' : 'italic' })}>Nghiêng</button>
+                    {(['left', 'center', 'right'] as const).map((alignment) => (
+                      <button key={alignment} type="button" aria-pressed={selectedText.properties.textAlign === alignment}
+                        aria-label={`Căn ${alignment === 'left' ? 'trái' : alignment === 'center' ? 'giữa' : 'phải'}`}
+                        disabled={documentActionLocked} onClick={() => changeTextProperties({ textAlign: alignment })}>
+                        {alignment === 'left' ? 'Trái' : alignment === 'center' ? 'Giữa' : 'Phải'}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="text-controls__grid">
+                    <label className="text-controls__field" htmlFor="selected-text-color">
+                      Màu chữ
+                      <input id="selected-text-color" type="color" value={selectedText.properties.fill}
+                        disabled={documentActionLocked} onFocus={() => beginTextPropertyOperation(selectedText.id)}
+                        onChange={(event) => {
+                          try { validateTextPropertiesPatch({ fill: event.currentTarget.value }); }
+                          catch (error) { setTextError(error instanceof Error ? error.message : 'Màu chữ không hợp lệ.'); return; }
+                          textPropertyErrorRef.current = '';
+                          setTextError('');
+                          void canvasActionsRef.current?.setTextProperties(selectedText.id, { fill: event.currentTarget.value });
+                        }} onBlur={finishTextPropertyOperation} />
+                    </label>
+                    <label className="text-controls__field" htmlFor="selected-text-opacity">
+                      Độ mờ ({Math.round(selectedText.properties.opacity * 100)}%)
+                      <input id="selected-text-opacity" type="range" min="0" max="100" step="1"
+                        value={Math.round(selectedText.properties.opacity * 100)} disabled={documentActionLocked}
+                        onPointerDown={() => beginTextPropertyOperation(selectedText.id)}
+                        onKeyDown={() => beginTextPropertyOperation(selectedText.id)}
+                        onChange={(event) => {
+                          const opacity = Number(event.currentTarget.value) / 100;
+                          void canvasActionsRef.current?.setTextProperties(selectedText.id, { opacity });
+                        }} onPointerUp={finishTextPropertyOperation}
+                        onBlur={finishTextPropertyOperation} />
+                    </label>
+                  </div>
+                  <div className="text-controls__grid text-controls__grid--four">
+                    {([
+                      ['x', 'X (px)'], ['y', 'Y (px)'], ['angle', 'Góc (°)'], ['width', 'Rộng (px)'],
+                    ] as const).map(([field, label]) => (
+                      <label className="text-controls__field" htmlFor={`selected-text-${field}`} key={field}>
+                        {label}
+                        <input id={`selected-text-${field}`} type="number"
+                          min={field === 'width' ? 1 : undefined} max={field === 'width' ? 8192 : undefined}
+                          step={1}
+                          value={textPropertyInputs[field] ?? String(selectedText.properties[field])} disabled={documentActionLocked}
+                          onFocus={() => beginTextPropertyOperation(selectedText.id)}
+                          onChange={(event) => changeContinuousTextProperty(field, event.currentTarget.value)}
+                          onBlur={finishTextPropertyOperation}
+                          onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} />
+                      </label>
+                    ))}
+                  </div>
+                </>
               ) : (
                 <p className="text-controls__count">Chọn một textbox trên ảnh hoặc thêm chữ mới.</p>
               )}
@@ -1117,9 +1277,15 @@ function EditorPage({
                 </p>
               )}
               {textFontError && (
-                <p className="text-controls__error" role="alert">
-                  {textFontError} Bấm “Thêm chữ” để thử tải font lại.
-                </p>
+                <div className="text-controls__error" role="alert">
+                  {textFontError}
+                  {textFontRetryRef.current && selectedText && (
+                    <button type="button" disabled={documentActionLocked}
+                      onClick={() => { if (textFontRetryRef.current) changeTextProperties(textFontRetryRef.current); }}>
+                      Thử lại font
+                    </button>
+                  )}
+                </div>
               )}
               {textError && <p className="text-controls__error" role="alert">{textError}</p>}
             </section>

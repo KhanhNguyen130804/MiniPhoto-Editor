@@ -2,7 +2,7 @@
 
 Ngày ghi nhận: **08/10/2026**, Asia/Saigon.
 
-Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4, canvas lifecycle/viewport Day 5, import Day 6, history Day 7, geometry/pan/export Day 8, crop Day 9–10, resize Day 11–12, adjust Day 13, preset màu Day 14 và textbox Day 15. UI shape/layers và draft chưa triển khai. Walkthrough phân biệt phần đã triển khai, bằng chứng harness và hành vi UI đã kiểm.
+Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4, canvas lifecycle/viewport Day 5, import Day 6, history Day 7, geometry/pan/export Day 8, crop Day 9–10, resize Day 11–12, adjust Day 13, preset màu Day 14, textbox Day 15 và text properties Day 16. UI shape/layers và draft chưa triển khai. Walkthrough phân biệt phần đã triển khai, bằng chứng harness và hành vi UI đã kiểm.
 
 ## 1. Kết quả hiện có
 
@@ -255,3 +255,13 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 - `npm.cmd run typecheck`, `npm.cmd run build`, `git diff --check` pass. Vite build thành công với JavaScript bundle 572.80 kB và cảnh báo >500 kB; không thêm package hoặc test runner.
 - UI smoke trên Chrome 155 / Windows 10, viewport 1280×720, DPR 1.1979; import `tests/fixtures/day2-import/webp-static.webp` 1024×772, thêm và nhập text nhiều dòng có dấu bằng textarea, mở export và tạo PNG Blob 1024×772 (1,581,448 byte). Undo gỡ textbox; Redo khôi phục; chọn và xóa textbox rồi Undo khôi phục; xóa hết nội dung textbox hiện có làm panel bỏ selection và Undo khôi phục lớp; Escape hủy textbox mới pending, không tạo bước lịch sử. Ảnh được hiển thị trên canvas.
 - **Giới hạn acceptance:** textarea/Playwright không mô phỏng Vietnamese IME thật; chưa kiểm Ctrl+Z native, desktop Fabric inline edit bằng gõ trực tiếp, mobile thật, screen reader, browser/DPR khác, tải file xuống đĩa hoặc UI retry khi font lỗi. Vì vậy AC-17/18/19 chưa được xác nhận 100%; Day 15 core đã implementation nhưng Gate 3 còn mở do IME/font failure QA, shapes/layers/keyboard và các ngày Phase 3 còn lại.
+
+## 24. Phase 3 — Day 16 text properties (08/10/2026)
+
+- `snapshot.ts` thêm `fontWeight`, `fontStyle`, `textAlign` vào text overlay và nâng editor snapshot lên schema 2. Chưa cần migration vì sản phẩm chưa lưu/khôi phục editor snapshot; Day 3 spike dùng model tách biệt.
+- `engine/text.ts` định nghĩa typed patch, kiểm tra family/style/weight/alignment, finite X/Y/góc, width 1–8192, font size 8–512, opacity 0–100% và mã màu hex. X/Y, width/font size properties dùng tọa độ/kích thước hiệu dụng của document hiện tại; khi lưu, `serializeTextObject` chuyển geometry/style scale về snapshot base. Font readiness dedupe theo family/style/weight; thêm text vẫn dùng default Noto Sans.
+- `EditorCanvas` áp thuộc tính lên Textbox sau khi font tương ứng tải; phiên property riêng commit theo action, input số/range gom theo một phiên. Cancel tái dựng đầy đủ baseline text/style/transform/visibility/opacity. Scene update và object transform cũng làm mới giá trị panel hiện tại.
+- `App` thêm UI font family/size, bold/italic, alignment, fill, opacity, X/Y, angle và wrap width; validation báo lỗi, input số invalid hủy phiên khi blur, font lỗi giữ style cũ và có hành động retry/chọn font khác. `exportImage` dùng family/style/weight snapshot trước render; no fallback export.
+- Thêm `/tests/manual/day16-text-properties.html` + `.ts`; 7 nhóm pass trong Chrome 155 trên Windows 10, viewport 579×806, DPR 1.1979: schema/defaults; ranh giới/validation; full property round-trip sau crop/rotate/resize; cancel khôi phục cả state; discrete/no-op/gesture history; PNG export full-size với Noto Serif bold italic; thiếu font bị từ chối. Regression Day 10/12/15 pass 6/4/7 nhóm. Day 10/12 manual HTML được nối `app.css` để dùng Noto self-host sau khi fixtures đổi từ Arial sang schema font được hỗ trợ.
+- `npm.cmd run typecheck` và `npm.cmd run build` pass; Vite build tạo JS 581.45 kB và cảnh báo chunk >500 kB. Không thêm dependency/test runner; chỉ có manual harness.
+- Product UI chưa smoke vì browser session không mở native file picker để nạp fixture. Do đó chưa có bằng chứng thao tác control/history trong App; AC-17 cần IME thật, AC-18 Ctrl+Z native trong textarea, AC-19 chặn font asset rồi kiểm style rollback/retry/export failure. Cross-browser/mobile, screen reader và tải file xuống đĩa cũng chưa kiểm. **Implementation/core harness đã có; AC-17–19 chưa được xác nhận 100% và Gate 3 còn mở.**

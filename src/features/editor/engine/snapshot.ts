@@ -2,6 +2,11 @@ import type { TMat2D } from 'fabric';
 
 export const MAX_TEXT_CODE_POINTS = 2000;
 
+export type TextFontFamily = 'Noto Sans' | 'Noto Serif';
+export type TextFontWeight = 400 | 700;
+export type TextFontStyle = 'normal' | 'italic';
+export type TextAlignment = 'left' | 'center' | 'right';
+
 export function normalizeTextContent(value: string): string {
   return Array.from(value.replace(/\r\n?/g, '\n'))
     .slice(0, MAX_TEXT_CODE_POINTS)
@@ -42,8 +47,11 @@ export type TextOverlaySnapshot = OverlayTransformSnapshot & {
   readonly role: 'text';
   readonly text: string;
   readonly width: number;
-  readonly fontFamily: string;
+  readonly fontFamily: TextFontFamily;
   readonly fontSize: number;
+  readonly fontWeight: TextFontWeight;
+  readonly fontStyle: TextFontStyle;
+  readonly textAlign: TextAlignment;
   readonly fill: string;
 };
 
@@ -88,7 +96,7 @@ export type ImageAppearanceSnapshot = {
 };
 
 export type EditorSnapshot = {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly document: {
     readonly width: number;
     readonly height: number;
@@ -111,7 +119,7 @@ export function createImageBaselineSnapshot(
   }
 
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     document: { width, height, sourceAssetId },
     documentTransform: [1, 0, 0, 1, 0, 0],
     imageAppearance: {

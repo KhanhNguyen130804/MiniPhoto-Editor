@@ -1,9 +1,14 @@
 import { Point, Textbox, util } from 'fabric';
+import { applyDocumentTransform } from './geometry';
 import { createFabricOverlay, MAX_OVERLAYS } from './scene';
 import {
   MAX_TEXT_CODE_POINTS,
   normalizeTextContent,
   type EditorSnapshot,
+  type TextAlignment,
+  type TextFontFamily,
+  type TextFontStyle,
+  type TextFontWeight,
   type TextOverlaySnapshot,
 } from './snapshot';
 
@@ -12,7 +17,23 @@ export const DEFAULT_TEXT_FONT_FAMILY = 'Noto Sans';
 export const DEFAULT_TEXT_FILL = '#111827';
 
 const TEXT_FONT_SAMPLE = 'Tiếng Việt: Ắ ễ đ ộ a\u0301';
-const TEXT_FONT_FAMILIES = new Set([DEFAULT_TEXT_FONT_FAMILY, 'Noto Serif']);
+const TEXT_FONT_FAMILIES = new Set<string>([DEFAULT_TEXT_FONT_FAMILY, 'Noto Serif']);
+
+export type TextProperties = {
+  x: number;
+  y: number;
+  angle: number;
+  width: number;
+  fontFamily: TextFontFamily;
+  fontSize: number;
+  fontWeight: TextFontWeight;
+  fontStyle: TextFontStyle;
+  textAlign: TextAlignment;
+  fill: string;
+  opacity: number;
+};
+
+export type TextPropertiesPatch = Partial<TextProperties>;
 
 export async function ensureTextFontReady(
   fontFamily = DEFAULT_TEXT_FONT_FAMILY,
@@ -41,10 +62,99 @@ export async function ensureTextFontReady(
 }
 
 export async function ensureSnapshotTextFonts(snapshot: EditorSnapshot): Promise<void> {
-  const families = [...new Set(snapshot.scene
+  const faces = [...new Map(snapshot.scene
     .filter((item): item is TextOverlaySnapshot => item.role === 'text')
-    .map((item) => item.fontFamily))];
-  await Promise.all(families.map((family) => ensureTextFontReady(family)));
+    .map((item) => [`${item.fontFamily}:${item.fontStyle}:${item.fontWeight}`, item] as const))].map(([, item]) => item);
+  await Promise.all(faces.map((item) => ensureTextFontReady(item.fontFamily, item.fontStyle, item.fontWeight)));
+}
+
+export function textPropertiesFromObject(object: Textbox): TextProperties {
+  return {
+    x: object.left,
+    y: object.top,
+    angle: object.angle,
+    width: object.width * Math.abs(object.scaleX),
+    fontFamily: object.fontFamily as TextFontFamily,
+    fontSize: object.fontSize * Math.abs(object.scaleY),
+    fontWeight: object.fontWeight as TextFontWeight,
+    fontStyle: object.fontStyle as TextFontStyle,
+    textAlign: object.textAlign as TextAlignment,
+    fill: object.fill as string,
+    opacity: object.opacity,
+  };
+}
+
+export function validateTextPropertiesPatch(patch: TextPropertiesPatch): void {
+  for (const field of ['x', 'y', 'angle'] as const) {
+    if (patch[field] !== undefined && !Number.isFinite(patch[field])) throw new RangeError(`Invalid text ${field}.`);
+  }
+  if (patch.width !== undefined && (!Number.isFinite(patch.width) || patch.width < 1 || patch.width > 8192)) {
+    throw new RangeError('Textbox width must be between 1 and 8192 px.');
+  }
+  if (patch.fontSize !== undefined && (!Number.isFinite(patch.fontSize) || patch.fontSize < 8 || patch.fontSize > 512)) {
+    throw new RangeError('Font size must be between 8 and 512 px.');
+  }
+  if (patch.opacity !== undefined && (!Number.isFinite(patch.opacity) || patch.opacity < 0 || patch.opacity > 1)) {
+    throw new RangeError('Text opacity must be between 0 and 100%.');
+  }
+  if (patch.fontFamily !== undefined && !TEXT_FONT_FAMILIES.has(patch.fontFamily)) {
+    throw new RangeError('Choose Noto Sans or Noto Serif.');
+  }
+  if (patch.fontWeight !== undefined && patch.fontWeight !== 400 && patch.fontWeight !== 700) {
+    throw new RangeError('Text weight must be regular or bold.');
+  }
+  if (patch.fontStyle !== undefined && patch.fontStyle !== 'normal' && patch.fontStyle !== 'italic') {
+    throw new RangeError('Text style must be normal or italic.');
+  }
+  if (patch.textAlign !== undefined && !['left', 'center', 'right'].includes(patch.textAlign)) {
+    throw new RangeError('Choose left, center, or right alignment.');
+  }
+  if (patch.fill !== undefined && !/^#[\da-f]{6}$/i.test(patch.fill)) {
+    throw new RangeError('Text color must be a six-digit hex color.');
+  }
+}
+
+export function applyTextPropertiesPatch(object: Textbox, patch: TextPropertiesPatch): void {
+  validateTextPropertiesPatch(patch);
+  const { x, y, width, fontSize, ...style } = patch;
+  object.set({
+    ...style,
+    ...(width === undefined ? {} : { width: width / Math.abs(object.scaleX) }),
+    ...(fontSize === undefined ? {} : { fontSize: fontSize / Math.abs(object.scaleY) }),
+    ...(x === undefined ? {} : { left: x }),
+    ...(y === undefined ? {} : { top: y }),
+  });
+  object.initDimensions();
+  object.setCoords();
+}
+
+export function restoreTextObject(snapshot: EditorSnapshot, object: Textbox, baseline: TextOverlaySnapshot): void {
+  const restored = createFabricOverlay(baseline, true) as Textbox;
+  applyDocumentTransform(restored, snapshot.documentTransform);
+  object.set({
+    text: baseline.text,
+    width: baseline.width,
+    fontFamily: baseline.fontFamily,
+    fontSize: baseline.fontSize,
+    fontWeight: baseline.fontWeight,
+    fontStyle: baseline.fontStyle,
+    textAlign: baseline.textAlign,
+    fill: baseline.fill,
+    opacity: baseline.opacity,
+    visible: baseline.visible,
+  });
+  object.initDimensions();
+  object.set({
+    left: restored.left,
+    top: restored.top,
+    scaleX: restored.scaleX,
+    scaleY: restored.scaleY,
+    angle: restored.angle,
+    flipX: restored.flipX,
+    flipY: restored.flipY,
+  });
+  restored.dispose();
+  object.setCoords();
 }
 
 function defaultFontSize(snapshot: EditorSnapshot): number {
@@ -65,6 +175,9 @@ export function createDefaultTextObject(snapshot: EditorSnapshot, id: string): {
     width: snapshot.document.width * 0.8,
     fontFamily: DEFAULT_TEXT_FONT_FAMILY,
     fontSize: defaultFontSize(snapshot),
+    fontWeight: 400,
+    fontStyle: 'normal',
+    textAlign: 'left',
     fill: DEFAULT_TEXT_FILL,
     left: 0,
     top: 0,
@@ -92,7 +205,17 @@ export function serializeTextObject(
   baseline: TextOverlaySnapshot,
 ): TextOverlaySnapshot {
   const text = normalizeTextContent(object.text);
-  const normalized = { ...baseline, text, width: object.width };
+  const normalized = {
+    ...baseline,
+    text,
+    width: object.width,
+    fontFamily: object.fontFamily as TextFontFamily,
+    fontSize: object.fontSize,
+    fontWeight: object.fontWeight as TextFontWeight,
+    fontStyle: object.fontStyle as TextFontStyle,
+    textAlign: object.textAlign as TextAlignment,
+    fill: object.fill as string,
+  };
   const baseObject = createFabricOverlay(normalized) as Textbox;
   const inverse = util.invertTransform(snapshot.documentTransform);
   util.applyTransformToObject(baseObject, util.multiplyTransformMatrices(inverse, object.calcTransformMatrix()));

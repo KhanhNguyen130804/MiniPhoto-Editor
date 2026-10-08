@@ -39,7 +39,7 @@ function fixtureScene(snapshot: EditorSnapshot): EditorSnapshot {
   };
   const text: TextOverlaySnapshot = {
     id: 'day10-text', role: 'text', left: 16, top: 8, width: 24,
-    text: 'T', fontFamily: 'Arial', fontSize: 20, fill: '#000000', ...transform,
+    text: 'T', fontFamily: 'Noto Sans', fontSize: 20, fontWeight: 400, fontStyle: 'normal', textAlign: 'left', fill: '#000000', ...transform,
   };
   const rectangle: ShapeOverlaySnapshot = {
     id: 'day10-rectangle', role: 'shape', shape: 'rectangle', left: 12, top: 10,

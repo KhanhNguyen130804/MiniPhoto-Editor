@@ -5,7 +5,7 @@ import type { EditorSnapshot, TextOverlaySnapshot } from './engine/snapshot';
 import { createFabricOverlays } from './engine/scene';
 import { resizeCropRect, type CropHandle, type CropRatio, type CropRect } from './engine/crop';
 import { applyImageAdjustments } from './engine/adjustmentFilters';
-import { createDefaultTextObject, normalizeTextContent, putTextOverlay, removeTextOverlay, serializeTextObject } from './engine/text';
+import { applyTextPropertiesPatch, createDefaultTextObject, ensureTextFontReady, normalizeTextContent, putTextOverlay, removeTextOverlay, restoreTextObject, serializeTextObject, textPropertiesFromObject, validateTextPropertiesPatch, type TextProperties, type TextPropertiesPatch } from './engine/text';
 
 type Size = { width: number; height: number };
 
@@ -18,7 +18,7 @@ type EditorCanvasProps = {
   crop: { ratio: CropRatio; rect: CropRect } | null;
   onCropChange: (rect: CropRect) => void;
   selectedTextId: string | null;
-  onTextSelected: (id: string | null, text?: string, isNew?: boolean) => void;
+  onTextSelected: (id: string | null, text?: string, isNew?: boolean, properties?: TextProperties, cancelled?: boolean) => void;
   onTextDraftChange: (id: string, text: string) => void;
   onTextCommitted: (snapshot: EditorSnapshot) => void;
   children: ReactNode;
@@ -30,6 +30,8 @@ export type EditorCanvasHandle = {
   cancelTextEdit: () => void;
   deleteSelectedText: () => void;
   finishTextEdit: () => boolean;
+  beginTextPropertiesEdit: (id: string) => boolean;
+  setTextProperties: (id: string, patch: TextPropertiesPatch) => Promise<boolean>;
   setTextDraft: (id: string, text: string) => void;
 };
 
@@ -39,7 +41,9 @@ type TextEditSession = {
   baseline: TextOverlaySnapshot;
   baseSnapshot: EditorSnapshot;
   isNew: boolean;
-  source: 'fabric' | 'textarea';
+  source: 'fabric' | 'textarea' | 'properties';
+  pending?: Promise<void>;
+  finishAfterPending?: boolean;
 };
 
 type PanStart = { pointerId: number; x: number; y: number; transform: TMat2D };
@@ -154,7 +158,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     const id = object ? textIdsRef.current.get(object) : undefined;
     const textbox = id ? textObjectsRef.current.get(id) : undefined;
     if (id && textbox) {
-      propsRef.current.onTextSelected(id, normalizeTextContent(textbox.text));
+      propsRef.current.onTextSelected(id, normalizeTextContent(textbox.text), false, textPropertiesFromObject(textbox));
       if (!textbox.isEditing && !cropRef.current && !panModeRef.current && !spacePanRef.current) {
         stageRef.current?.focus({ preventScroll: true });
       }
@@ -180,6 +184,10 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     }
     const session = textSessionRef.current;
     if (!session) return true;
+    if (session.pending) {
+      session.finishAfterPending = true;
+      return false;
+    }
     textSessionRef.current = null;
     if (session.source === 'fabric' && session.object.isEditing) session.object.exitEditing();
 
@@ -214,11 +222,9 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       removePreviewObject(session.id, session.object);
       propsRef.current.onTextSelected(null);
     } else {
-      session.object.set('text', session.baseline.text);
-      session.object.initDimensions();
-      session.object.setCoords();
+      restoreTextObject(session.baseSnapshot, session.object, session.baseline);
       propsRef.current.onTextDraftChange(session.id, session.baseline.text);
-      propsRef.current.onTextSelected(session.id, session.baseline.text);
+      propsRef.current.onTextSelected(session.id, session.baseline.text, false, textPropertiesFromObject(session.object), true);
     }
     if (session.source === 'fabric' && session.object.isEditing) session.object.exitEditing();
     if (session.source === 'textarea' && document.activeElement instanceof HTMLElement) {
@@ -227,9 +233,9 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     canvasRef.current?.requestRenderAll();
   };
 
-  const beginTextSession = (id: string, object: Textbox, source: TextEditSession['source']) => {
+  const beginTextSession = (id: string, object: Textbox, source: 'fabric' | 'textarea') => {
     const active = textSessionRef.current;
-    if (active?.id === id) {
+    if (active?.id === id && active.source !== 'properties') {
       if (source === 'textarea') active.source = source;
       return;
     }
@@ -240,6 +246,64 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     );
     if (!baseline) return;
     textSessionRef.current = { id, object, baseline, baseSnapshot, isNew: false, source };
+  };
+
+  const beginTextPropertiesEdit = (id: string): boolean => {
+    if (documentActionsDisabledRef.current || cropRef.current || panModeRef.current || spacePanRef.current) return false;
+    const object = textObjectsRef.current.get(id);
+    if (!object) return false;
+    if (textSessionRef.current?.id === id && textSessionRef.current.source === 'properties') return true;
+    if (textSessionRef.current && !finishTextEdit()) return false;
+    const baseSnapshot = snapshotRef.current;
+    const baseline = baseSnapshot.scene.find(
+      (item): item is TextOverlaySnapshot => item.role === 'text' && item.id === id,
+    );
+    if (!baseline) return false;
+    textSessionRef.current = { id, object, baseline, baseSnapshot, isNew: false, source: 'properties' };
+    return true;
+  };
+
+  const setTextProperties = async (id: string, patch: TextPropertiesPatch): Promise<boolean> => {
+    const session = textSessionRef.current;
+    if (!session || session.id !== id || session.source !== 'properties') return false;
+    if (session.pending) return false;
+    validateTextPropertiesPatch(patch);
+    const object = session.object;
+    const fontFamily = patch.fontFamily ?? object.fontFamily as TextProperties['fontFamily'];
+    const fontStyle = patch.fontStyle ?? object.fontStyle as TextProperties['fontStyle'];
+    const fontWeight = patch.fontWeight ?? object.fontWeight as TextProperties['fontWeight'];
+    const fontChanged = (patch.fontFamily !== undefined && patch.fontFamily !== object.fontFamily)
+      || (patch.fontStyle !== undefined && patch.fontStyle !== object.fontStyle)
+      || (patch.fontWeight !== undefined && patch.fontWeight !== object.fontWeight);
+    if (fontChanged) {
+      const pending = ensureTextFontReady(fontFamily, fontStyle, fontWeight);
+      session.pending = pending;
+      let loadError: unknown;
+      try {
+        await pending;
+      } catch (error) {
+        loadError = error;
+      } finally {
+        if (session.pending === pending) session.pending = undefined;
+      }
+      if (textSessionRef.current !== session) return false;
+      if (loadError) {
+        if (session.finishAfterPending) {
+          session.finishAfterPending = false;
+          finishTextEdit();
+        }
+        throw loadError;
+      }
+    }
+    if (textSessionRef.current !== session) return false;
+    applyTextPropertiesPatch(object, patch);
+    propsRef.current.onTextSelected(id, normalizeTextContent(object.text), false, textPropertiesFromObject(object));
+    canvasRef.current?.requestRenderAll();
+    if (session.finishAfterPending) {
+      session.finishAfterPending = false;
+      finishTextEdit();
+    }
+    return true;
   };
 
   const addText = () => {
@@ -264,7 +328,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       isNew: true,
       source,
     };
-    propsRef.current.onTextSelected(id, overlay.text, true);
+    propsRef.current.onTextSelected(id, overlay.text, true, textPropertiesFromObject(object));
     if (source === 'fabric') {
       object.enterEditing();
       object.selectAll();
@@ -316,6 +380,8 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     cancelTextEdit,
     deleteSelectedText,
     finishTextEdit,
+    beginTextPropertiesEdit,
+    setTextProperties,
     setTextDraft,
   }));
 
@@ -410,7 +476,10 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       object.set({ selectable: canInteract, evented: canInteract, hasControls: canInteract, hasBorders: canInteract });
     }
     const selected = canInteract && selectedId ? textObjectsRef.current.get(selectedId) : undefined;
-    if (selected) canvas.setActiveObject(selected);
+    if (selected) {
+      canvas.setActiveObject(selected);
+      propsRef.current.onTextSelected(selectedId!, normalizeTextContent(selected.text), false, textPropertiesFromObject(selected));
+    }
     else if (canvas.getActiveObject() instanceof Textbox) canvas.discardActiveObject();
     canvas.requestRenderAll();
   };
@@ -515,6 +584,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
           if (!baseline) return;
           const next = putTextOverlay(current, serializeTextObject(current, target, baseline));
           snapshotRef.current = next;
+          propsRef.current.onTextSelected(id, normalizeTextContent(target.text), false, textPropertiesFromObject(target));
           propsRef.current.onTextCommitted(next);
         }),
       );
@@ -604,9 +674,12 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       object.set({ selectable: canInteract, evented: canInteract, hasControls: canInteract, hasBorders: canInteract });
     }
     if (!canInteract) {
+      const fontPending = Boolean(textSessionRef.current?.pending);
       if (textSessionRef.current) finishTextEdit();
-      canvas.discardActiveObject();
-      propsRef.current.onTextSelected(null);
+      if (!fontPending) {
+        canvas.discardActiveObject();
+        propsRef.current.onTextSelected(null);
+      }
     }
     canvas.requestRenderAll();
   }, [crop, documentActionsDisabled, panMode, spacePan]);

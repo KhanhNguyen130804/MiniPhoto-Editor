@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Day 16 — text properties</title>
+    <link rel="stylesheet" href="/src/app.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Day 16 — thuộc tính chữ</h1>
+      <p>Kiểm tra style, vị trí theo document, giao dịch history và export ở đủ kích thước.</p>
+      <button id="run" type="button">Chạy kiểm tra Day 16</button>
+      <pre id="results" aria-live="polite">Chưa chạy.</pre>
+      <h2>Kiểm tra thủ công còn cần thiết</h2>
+      <ul>
+        <li>AC-17: nhập “Tiếng Việt: Ắ ễ đ ộ” và nhiều dòng bằng IME tiếng Việt thật; blur/export vẫn giữ dấu.</li>
+        <li>AC-18: Ctrl+Z khi textarea đang focus chỉ undo thao tác nhập gốc của textarea.</li>
+        <li>AC-19: chặn font asset trong DevTools, thử Noto khác hoặc Thử lại font; style cũ được giữ và export báo lỗi khi font chưa sẵn sàng.</li>
+        <li>UI: mỗi lần đổi select/toggle tạo một Undo; kéo opacity hoặc nhập một trường số rồi blur chỉ tạo một Undo; Escape khôi phục toàn bộ thuộc tính.</li>
+      </ul>
+    </main>
+    <script type="module" src="./day16-text-properties.ts"></script>
+  </body>
+</html>

@@ -36,9 +36,14 @@ function validStroke(stroke: string | null, strokeWidth: number): boolean {
 export function createFabricOverlay(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot, interactiveText = false): FabricObject {
   const common = overlayOptions(snapshot, interactiveText);
   if (snapshot.role === 'text') {
-    if (!snapshot.text || !snapshot.fontFamily || !Number.isFinite(snapshot.width) || snapshot.width <= 0
+    if (!snapshot.text || !['Noto Sans', 'Noto Serif'].includes(snapshot.fontFamily)
+      || !Number.isFinite(snapshot.width) || snapshot.width <= 0
       || Array.from(snapshot.text).length > MAX_TEXT_CODE_POINTS || normalizeTextContent(snapshot.text) !== snapshot.text
-      || !Number.isFinite(snapshot.fontSize) || snapshot.fontSize < 1 || !snapshot.fill) {
+      || !Number.isFinite(snapshot.fontSize) || snapshot.fontSize <= 0
+      || ![400, 700].includes(snapshot.fontWeight)
+      || !['normal', 'italic'].includes(snapshot.fontStyle)
+      || !['left', 'center', 'right'].includes(snapshot.textAlign)
+      || !snapshot.fill) {
       throw new TypeError('Invalid text overlay.');
     }
     const textbox = new Textbox(snapshot.text, {
@@ -48,6 +53,9 @@ export function createFabricOverlay(snapshot: TextOverlaySnapshot | ShapeOverlay
       width: snapshot.width,
       fontFamily: snapshot.fontFamily,
       fontSize: snapshot.fontSize,
+      fontWeight: snapshot.fontWeight,
+      fontStyle: snapshot.fontStyle,
+      textAlign: snapshot.textAlign,
       fill: snapshot.fill,
     });
     if (interactiveText) textbox.setControlsVisibility({ ml: false, mt: false, mr: false, mb: false });

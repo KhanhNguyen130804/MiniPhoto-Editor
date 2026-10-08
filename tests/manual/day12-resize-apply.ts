@@ -51,7 +51,7 @@ function fixtureScene(snapshot: EditorSnapshot): EditorSnapshot {
   };
   const text: TextOverlaySnapshot = {
     id: 'day12-text', role: 'text', left: 38, top: 5, width: 20,
-    text: 'T', fontFamily: 'Arial', fontSize: 16, fill: '#000000', ...transform,
+    text: 'T', fontFamily: 'Noto Sans', fontSize: 16, fontWeight: 400, fontStyle: 'normal', textAlign: 'left', fill: '#000000', ...transform,
   };
   const hidden: ShapeOverlaySnapshot = {
     id: 'day12-hidden', role: 'shape', shape: 'rectangle', left: 20, top: 32,
