@@ -15,5 +15,5 @@
     "noFallthroughCasesInSwitch": true,
     "types": ["vite/client"]
   },
-  "include": ["src", "tests/manual/day2-import.ts", "tests/manual/day3-spike.ts", "tests/manual/day7-history.ts", "tests/manual/day8-transform-export.ts", "tests/manual/day9-crop-pending.ts", "tests/manual/day10-crop-apply.ts", "tests/manual/day11-resize.ts", "tests/manual/day12-resize-apply.ts", "tests/manual/day13-adjustments.ts"]
+  "include": ["src", "tests/manual/day2-import.ts", "tests/manual/day3-spike.ts", "tests/manual/day7-history.ts", "tests/manual/day8-transform-export.ts", "tests/manual/day9-crop-pending.ts", "tests/manual/day10-crop-apply.ts", "tests/manual/day11-resize.ts", "tests/manual/day12-resize-apply.ts", "tests/manual/day13-adjustments.ts", "tests/manual/day15-text.ts"]
 }

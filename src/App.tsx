@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import type { FabricImage } from 'fabric';
-import EditorCanvas from './features/editor/EditorCanvas';
+import EditorCanvas, { type EditorCanvasHandle } from './features/editor/EditorCanvas';
 import PresetControls from './features/editor/PresetControls';
 import {
   canRedo,
@@ -20,7 +20,8 @@ import {
   validateImageFile,
   type ImageImportCandidate,
 } from './features/editor/engine/imageImport';
-import { createImageBaselineSnapshot, type EditorSnapshot, type PresetId } from './features/editor/engine/snapshot';
+import { createImageBaselineSnapshot, MAX_TEXT_CODE_POINTS, normalizeTextContent, type EditorSnapshot, type PresetId } from './features/editor/engine/snapshot';
+import { ensureTextFontReady } from './features/editor/engine/text';
 import {
   cropDocument as cropEditorDocument,
   resizeDocument as resizeEditorDocument,
@@ -169,7 +170,7 @@ function HelpDialogTrigger({ dark = false }: { dark?: boolean }) {
         <p className="eyebrow">MINIPHOTO EDITOR</p>
         <h2 id="help-dialog-title">Bắt đầu thật đơn giản</h2>
         <p id="help-dialog-copy">
-          Bạn có thể mở một ảnh JPG, PNG hoặc WebP tĩnh, cắt, đổi kích thước, xoay/lật, tinh chỉnh màu và tải ảnh xuống. Lưu bản nháp, bộ lọc và công cụ chữ/hình sẽ được bổ sung sau.
+          Bạn có thể mở ảnh JPG, PNG hoặc WebP tĩnh, cắt, đổi kích thước, xoay/lật, chọn bộ lọc, tinh chỉnh màu, thêm chú thích tiếng Việt và tải ảnh xuống. Lưu bản nháp và công cụ hình khối sẽ được bổ sung sau.
         </p>
         <div className="dialog-note">
           <strong>Cần trợ giúp ngay?</strong>
@@ -283,13 +284,14 @@ function HomePage({
           <div className="hero-copy">
             <p className="eyebrow"><span className="eyebrow-dot" /> BỘ CÔNG CỤ ẢNH GỌN NHẸ</p>
             <h1 id="home-title">Chỉnh ảnh đẹp,<br /><span>theo cách của bạn.</span></h1>
-            <p className="hero-lede">Cắt ảnh, tinh chỉnh màu sắc và tải kết quả xuống — trong một không gian đơn giản, dễ dùng.</p>
+            <p className="hero-lede">Cắt ảnh, tinh chỉnh màu sắc, thêm chú thích tiếng Việt và tải kết quả xuống — trong một không gian đơn giản, dễ dùng.</p>
             <ul className="feature-list" aria-label="Công cụ hiện có">
               <li><span aria-hidden="true">✓</span> Cắt &amp; đổi kích thước</li>
               <li><span aria-hidden="true">✓</span> Chỉnh màu</li>
               <li><span aria-hidden="true">✓</span> Xoay &amp; lật</li>
+              <li><span aria-hidden="true">✓</span> Bộ lọc &amp; chú thích tiếng Việt</li>
             </ul>
-            <p className="build-note">Ảnh được đọc trong trình duyệt. Hiện có thể cắt, đổi kích thước, chỉnh màu, xoay/lật và tải ảnh. Lưu bản nháp cùng công cụ chữ/hình sẽ được bổ sung sau.</p>
+            <p className="build-note">Ảnh được đọc trong trình duyệt. Có thể cắt, đổi kích thước, chỉnh màu, áp bộ lọc, thêm chú thích và tải ảnh; lưu bản nháp cùng công cụ hình khối sẽ được bổ sung sau.</p>
           </div>
 
           <section className={`import-card${state === 'error' || status.phase === 'error' ? ' import-card--error' : ''}`} aria-labelledby="import-title">
@@ -364,6 +366,7 @@ function EditorPage({
   onApplyCrop,
   onApplyResize,
   onApplyAdjustments,
+  onApplyText,
   onChoose,
   replaceButtonRef,
   detachImageRef,
@@ -379,11 +382,15 @@ function EditorPage({
   onApplyCrop: (snapshot: EditorSnapshot) => void;
   onApplyResize: (snapshot: EditorSnapshot) => void;
   onApplyAdjustments: (snapshot: EditorSnapshot) => void;
+  onApplyText: (snapshot: EditorSnapshot) => void;
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
 }) {
   const tools = ['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'];
+  const canvasActionsRef = useRef<EditorCanvasHandle>(null);
+  const finishTextEdit = () => canvasActionsRef.current?.finishTextEdit() !== false;
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const exportDialogRef = useRef<HTMLDialogElement>(null);
   const exportUrlRef = useRef<string | null>(null);
@@ -402,6 +409,10 @@ function EditorPage({
   const [resizePending, setResizePending] = useState<PendingResize | null>(null);
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
+  const [textToolOpen, setTextToolOpen] = useState(false);
+  const [selectedText, setSelectedText] = useState<{ id: string; text: string; isNew: boolean } | null>(null);
+  const [textError, setTextError] = useState('');
+  const [textFontError, setTextFontError] = useState('');
   const [adjustmentPreview, setAdjustmentPreview] = useState<ImageAdjustments | null>(null);
   const [adjustmentOperationActive, setAdjustmentOperationActive] = useState(false);
   const [adjustmentInputs, setAdjustmentInputs] = useState<Partial<Record<AdjustmentField, string>>>({});
@@ -410,6 +421,66 @@ function EditorPage({
   const adjustmentErrorsRef = useRef<Partial<Record<AdjustmentField, string>>>({});
   const latestSnapshotRef = useRef(snapshot);
   latestSnapshotRef.current = snapshot;
+
+  const handleTextSelected = (id: string | null, text = '', isNew = false) => {
+    if (!id) {
+      setSelectedText(null);
+      return;
+    }
+    setSelectedText({ id, text, isNew });
+    setTextToolOpen(true);
+    setAdjustmentOpen(false);
+    setFilterOpen(false);
+    setPanelOpen(true);
+  };
+
+  const handleTextDraftChange = (id: string, text: string) => {
+    setSelectedText((current) => current?.id === id ? { ...current, text } : current);
+  };
+
+  const addText = async () => {
+    if (cropPending || resizePending || exportBusy || adjustmentOperationActive || status.phase === 'loading') return;
+    if (!finishTextEdit()) return;
+    setTextError('');
+    setTextFontError('');
+    try {
+      await ensureTextFontReady();
+      canvasActionsRef.current?.addText();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Không thể thêm chữ. Hãy thử lại.';
+      if (message.includes('font') || message.includes('Font')) setTextFontError(message);
+      else setTextError(message);
+    }
+  };
+
+  const toggleTextTool = () => {
+    if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    if (!finishTextEdit()) return;
+    if (textToolOpen) {
+      setTextToolOpen(false);
+      setPanelOpen(false);
+    } else {
+      setAdjustmentOpen(false);
+      setFilterOpen(false);
+      setTextToolOpen(true);
+      setPanelOpen(true);
+    }
+  };
+
+  useEffect(() => {
+    if (!selectedText) return;
+    if (selectedText.isNew && !window.matchMedia('(max-width: 767px)').matches) {
+      setSelectedText((current) => current?.id === selectedText.id ? { ...current, isNew: false } : current);
+      return;
+    }
+    if (window.matchMedia('(max-width: 767px)').matches) {
+      textAreaRef.current?.focus();
+      if (selectedText.isNew) textAreaRef.current?.select();
+    }
+    if (selectedText.isNew) {
+      setSelectedText((current) => current?.id === selectedText.id ? { ...current, isNew: false } : current);
+    }
+  }, [selectedText?.id, selectedText?.isNew]);
 
   const clearAdjustmentDraft = () => {
     adjustmentOperationRef.current = null;
@@ -494,8 +565,10 @@ function EditorPage({
 
   const startCrop = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    if (!finishTextEdit()) return;
     setAdjustmentOpen(false);
     setFilterOpen(false);
+    setTextToolOpen(false);
     setPanelOpen(true);
     const rect = createCropRect(snapshot.document, 'free');
     if (!rect) return;
@@ -512,8 +585,10 @@ function EditorPage({
 
   const startResize = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    if (!finishTextEdit()) return;
     setAdjustmentOpen(false);
     setFilterOpen(false);
+    setTextToolOpen(false);
     const base = { width: snapshot.document.width, height: snapshot.document.height };
     setResizePending({
       base,
@@ -694,6 +769,8 @@ function EditorPage({
 
   const toggleAdjustments = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    if (!finishTextEdit()) return;
+    setTextToolOpen(false);
     if (adjustmentOpen) {
       setAdjustmentOpen(false);
       setPanelOpen(false);
@@ -705,6 +782,8 @@ function EditorPage({
   };
   const toggleFilters = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    if (!finishTextEdit()) return;
+    setTextToolOpen(false);
     if (filterOpen) {
       setFilterOpen(false);
       setPanelOpen(false);
@@ -723,7 +802,7 @@ function EditorPage({
     onApplyAdjustments(next);
   };
   const activeTool = cropPending ? 'Cắt' : resizePending ? 'Kích thước'
-    : filterOpen ? 'Bộ lọc' : adjustmentOpen ? 'Điều chỉnh' : null;
+    : filterOpen ? 'Bộ lọc' : adjustmentOpen ? 'Điều chỉnh' : textToolOpen ? 'Chữ' : null;
   const documentActionLocked = exportBusy || Boolean(cropPending || resizePending || adjustmentOperationActive);
   const displayedAdjustments = adjustmentPreview ?? snapshotAdjustments(snapshot);
   const previewCanvasSnapshot = previewSnapshot;
@@ -738,9 +817,9 @@ function EditorPage({
           <span className="document-name" title={candidate.source.name}>{candidate.source.name}</span>
         </div>
         <div className="editor-topbar__actions">
-          <button className="editor-quiet-button" type="button" onClick={onUndo} disabled={!undoEnabled || documentActionLocked}>Hoàn tác</button>
-          <button className="editor-quiet-button" type="button" onClick={onRedo} disabled={!redoEnabled || documentActionLocked}>Làm lại</button>
-          <button className="editor-quiet-button" type="button" onClick={onChoose} ref={replaceButtonRef} disabled={status.phase === 'loading' || documentActionLocked}>
+          <button className="editor-quiet-button" type="button" onClick={() => { if (finishTextEdit()) onUndo(); }} disabled={!undoEnabled || documentActionLocked}>Hoàn tác</button>
+          <button className="editor-quiet-button" type="button" onClick={() => { if (finishTextEdit()) onRedo(); }} disabled={!redoEnabled || documentActionLocked}>Làm lại</button>
+          <button className="editor-quiet-button" type="button" onClick={(event) => { if (finishTextEdit()) onChoose(event); }} ref={replaceButtonRef} disabled={status.phase === 'loading' || documentActionLocked}>
             Thay ảnh
           </button>
           <button
@@ -748,6 +827,7 @@ function EditorPage({
             type="button"
             disabled={documentActionLocked}
             onClick={() => {
+              if (!finishTextEdit()) return;
               setExportError('');
               exportDialogRef.current?.showModal();
             }}
@@ -759,7 +839,10 @@ function EditorPage({
             type="button"
             aria-expanded={panelOpen}
             aria-controls="editor-properties-panel"
-            onClick={() => setPanelOpen((open) => !open)}
+            onClick={() => {
+              if (!finishTextEdit()) return;
+              setPanelOpen((open) => !open);
+            }}
           >
             Thuộc tính
           </button>
@@ -774,14 +857,15 @@ function EditorPage({
               className={`tool-item${activeTool === tool ? ' tool-item--active' : ''}`}
               type="button"
               key={tool}
-              disabled={(!['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc'].includes(tool)) || exportBusy || status.phase === 'loading'
+              disabled={(!['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ'].includes(tool)) || exportBusy || status.phase === 'loading'
                 || Boolean((cropPending || resizePending) && activeTool !== tool)}
-              aria-pressed={['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc'].includes(tool) ? activeTool === tool : undefined}
+              aria-pressed={['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ'].includes(tool) ? activeTool === tool : undefined}
               onClick={tool === 'Cắt'
                 ? (cropPending ? cancelCrop : startCrop)
                 : tool === 'Kích thước' ? (resizePending ? cancelResize : startResize)
                   : tool === 'Điều chỉnh' ? toggleAdjustments
-                    : tool === 'Bộ lọc' ? toggleFilters : undefined}
+                    : tool === 'Bộ lọc' ? toggleFilters
+                      : tool === 'Chữ' ? toggleTextTool : undefined}
             >
               <span className="tool-item__icon" aria-hidden="true">{['⌗', '↔', '◐', '✧', 'T', '◇'][index]}</span>
               <span>{tool}</span>
@@ -791,6 +875,7 @@ function EditorPage({
 
         <main className="workspace" aria-label="Vùng làm việc">
           <EditorCanvas
+            ref={canvasActionsRef}
             image={candidate.image}
             snapshot={previewCanvasSnapshot}
             detachImageRef={detachImageRef}
@@ -798,6 +883,10 @@ function EditorPage({
             documentActionsDisabled={documentActionLocked}
             crop={cropPending}
             onCropChange={updateCropRect}
+            selectedTextId={selectedText?.id ?? null}
+            onTextSelected={handleTextSelected}
+            onTextDraftChange={handleTextDraftChange}
+            onTextCommitted={onApplyText}
           >
             <EditorStatus status={status} />
           </EditorCanvas>
@@ -983,19 +1072,71 @@ function EditorPage({
                 Đặt lại tất cả
               </button>
             </section>
+          ) : textToolOpen ? (
+            <section className="text-controls" aria-labelledby="text-controls-title">
+              <div className="text-controls__intro">
+                <strong id="text-controls-title">Chú thích trên ảnh</strong>
+                <p>Chữ tiếng Việt nhiều dòng; kéo, scale đồng đều hoặc xoay textbox đã chọn.</p>
+              </div>
+              <div className="text-controls__actions">
+                <button type="button" onClick={() => { void addText(); }} disabled={documentActionLocked}>
+                  Thêm chữ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => canvasActionsRef.current?.deleteSelectedText()}
+                  disabled={!selectedText || documentActionLocked}
+                >
+                  Xóa chữ
+                </button>
+              </div>
+              {selectedText ? (
+                <label className="text-controls__field" htmlFor="selected-text-content">
+                  Nội dung
+                  <textarea
+                    id="selected-text-content"
+                    ref={textAreaRef}
+                    rows={3}
+                    value={selectedText.text}
+                    aria-describedby="selected-text-count"
+                    onFocus={() => canvasActionsRef.current?.beginTextareaEdit(selectedText.id)}
+                    onBlur={() => canvasActionsRef.current?.finishTextEdit()}
+                    onChange={(event) => {
+                      const text = normalizeTextContent(event.currentTarget.value);
+                      setSelectedText((current) => current?.id === selectedText.id ? { ...current, text } : current);
+                      canvasActionsRef.current?.setTextDraft(selectedText.id, text);
+                    }}
+                  />
+                </label>
+              ) : (
+                <p className="text-controls__count">Chọn một textbox trên ảnh hoặc thêm chữ mới.</p>
+              )}
+              {selectedText && (
+                <p className="text-controls__count" id="selected-text-count">
+                  {Array.from(selectedText.text).length.toLocaleString('vi-VN')} / {MAX_TEXT_CODE_POINTS} ký tự
+                </p>
+              )}
+              {textFontError && (
+                <p className="text-controls__error" role="alert">
+                  {textFontError} Bấm “Thêm chữ” để thử tải font lại.
+                </p>
+              )}
+              {textError && <p className="text-controls__error" role="alert">{textError}</p>}
+            </section>
           ) : (
             <div className="properties-empty">
               <span className="properties-empty__icon" aria-hidden="true">◇</span>
               <strong>Công cụ chưa khả dụng</strong>
-              <p>Chọn Cắt, Kích thước, Điều chỉnh hoặc Bộ lọc để thao tác với ảnh.</p>
+              <p>Chọn Cắt, Kích thước, Điều chỉnh, Bộ lọc hoặc Chữ để thao tác với ảnh.</p>
             </div>
           )}
           <div className="properties-note">
             <span className="properties-note__dot" aria-hidden="true" />
             <p>{cropPending
               ? 'Khung cắt chỉ tồn tại trong phiên đang mở và không làm thay đổi lịch sử.'
-              : resizePending ? 'Áp dụng sẽ scale toàn bộ nội dung và có thể hoàn tác bằng Undo.'
+            : resizePending ? 'Áp dụng sẽ scale toàn bộ nội dung và có thể hoàn tác bằng Undo.'
                 : adjustmentOpen || filterOpen ? 'Màu chỉ tác động ảnh nền; hình học và lớp phủ được giữ nguyên.'
+                  : textToolOpen ? 'Hoàn tất mỗi phiên sửa chữ thành một bước trong lịch sử; Escape hủy phiên hiện tại.'
                   : 'Các thay đổi được lưu trong lịch sử của phiên chỉnh sửa.'}</p>
           </div>
         </aside>
@@ -1400,6 +1541,7 @@ export default function App() {
           onApplyCrop={applyCrop}
           onApplyResize={applyResize}
           onApplyAdjustments={applyAdjustments}
+          onApplyText={applyAdjustments}
           onChoose={openFilePicker}
           replaceButtonRef={editorReplaceButtonRef}
           detachImageRef={detachImageRef}

@@ -1,5 +1,13 @@
 import type { TMat2D } from 'fabric';
 
+export const MAX_TEXT_CODE_POINTS = 2000;
+
+export function normalizeTextContent(value: string): string {
+  return Array.from(value.replace(/\r\n?/g, '\n'))
+    .slice(0, MAX_TEXT_CODE_POINTS)
+    .join('');
+}
+
 export type SourceImageSnapshot = {
   readonly id: string;
   readonly role: 'source-image';

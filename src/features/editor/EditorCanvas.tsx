@@ -1,10 +1,11 @@
-import { Canvas, FabricImage, Rect, type FabricObject, type TMat2D } from 'fabric';
-import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { Canvas, FabricImage, Rect, Textbox, type FabricObject, type TMat2D } from 'fabric';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { applyDocumentTransform, type GeometryCommand } from './engine/geometry';
-import type { EditorSnapshot } from './engine/snapshot';
+import type { EditorSnapshot, TextOverlaySnapshot } from './engine/snapshot';
 import { createFabricOverlays } from './engine/scene';
 import { resizeCropRect, type CropHandle, type CropRatio, type CropRect } from './engine/crop';
 import { applyImageAdjustments } from './engine/adjustmentFilters';
+import { createDefaultTextObject, normalizeTextContent, putTextOverlay, removeTextOverlay, serializeTextObject } from './engine/text';
 
 type Size = { width: number; height: number };
 
@@ -16,7 +17,29 @@ type EditorCanvasProps = {
   documentActionsDisabled: boolean;
   crop: { ratio: CropRatio; rect: CropRect } | null;
   onCropChange: (rect: CropRect) => void;
+  selectedTextId: string | null;
+  onTextSelected: (id: string | null, text?: string, isNew?: boolean) => void;
+  onTextDraftChange: (id: string, text: string) => void;
+  onTextCommitted: (snapshot: EditorSnapshot) => void;
   children: ReactNode;
+};
+
+export type EditorCanvasHandle = {
+  addText: () => void;
+  beginTextareaEdit: (id: string) => void;
+  cancelTextEdit: () => void;
+  deleteSelectedText: () => void;
+  finishTextEdit: () => boolean;
+  setTextDraft: (id: string, text: string) => void;
+};
+
+type TextEditSession = {
+  id: string;
+  object: Textbox;
+  baseline: TextOverlaySnapshot;
+  baseSnapshot: EditorSnapshot;
+  isNew: boolean;
+  source: 'fabric' | 'textarea';
 };
 
 type PanStart = { pointerId: number; x: number; y: number; transform: TMat2D };
@@ -63,8 +86,22 @@ function fitZoom(documentSize: Size, viewportSize: Size) {
   return Math.min(viewportSize.width / documentSize.width, viewportSize.height / documentSize.height, MAX_ZOOM);
 }
 
-export default function EditorCanvas({ snapshot, image, detachImageRef, onTransform, documentActionsDisabled, crop, onCropChange, children }: EditorCanvasProps) {
+const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function EditorCanvas({
+  snapshot,
+  image,
+  detachImageRef,
+  onTransform,
+  documentActionsDisabled,
+  crop,
+  onCropChange,
+  selectedTextId,
+  onTextSelected,
+  onTextDraftChange,
+  onTextCommitted,
+  children,
+}, ref) {
   const documentSize: Size = snapshot.document;
+  const stageRef = useRef<HTMLDivElement>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<Canvas | null>(null);
   const documentSizeRef = useRef(documentSize);
@@ -72,6 +109,18 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
   const snapshotRef = useRef(snapshot);
   const attachedImageRef = useRef<FabricImage | null>(null);
   const attachedOverlaysRef = useRef<FabricObject[]>([]);
+  const textObjectsRef = useRef(new Map<string, Textbox>());
+  const textIdsRef = useRef(new WeakMap<FabricObject, string>());
+  const textSessionRef = useRef<TextEditSession | null>(null);
+  const finishTextEditRef = useRef<() => boolean>(() => true);
+  const compositionActiveRef = useRef(false);
+  const finishAfterCompositionRef = useRef(false);
+  const selectedTextIdRef = useRef(selectedTextId);
+  const documentActionsDisabledRef = useRef(documentActionsDisabled);
+  const panModeRef = useRef(false);
+  const spacePanRef = useRef(false);
+  const cropRef = useRef(crop);
+  const propsRef = useRef({ onTransform, onTextSelected, onTextDraftChange, onTextCommitted });
   const documentClipRef = useRef<Rect | null>(null);
   const viewportSizeRef = useRef<Size>({ width: 0, height: 0 });
   const disposeQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -89,6 +138,186 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
   documentSizeRef.current = documentSize;
   imageRef.current = image;
   snapshotRef.current = snapshot;
+  selectedTextIdRef.current = selectedTextId;
+  documentActionsDisabledRef.current = documentActionsDisabled;
+  panModeRef.current = panMode;
+  spacePanRef.current = spacePan;
+  cropRef.current = crop;
+  propsRef.current = { onTransform, onTextSelected, onTextDraftChange, onTextCommitted };
+
+  const registerTextObject = (id: string, object: Textbox) => {
+    textObjectsRef.current.set(id, object);
+    textIdsRef.current.set(object, id);
+  };
+
+  const notifyTextSelection = (object: FabricObject | undefined) => {
+    const id = object ? textIdsRef.current.get(object) : undefined;
+    const textbox = id ? textObjectsRef.current.get(id) : undefined;
+    if (id && textbox) {
+      propsRef.current.onTextSelected(id, normalizeTextContent(textbox.text));
+      if (!textbox.isEditing && !cropRef.current && !panModeRef.current && !spacePanRef.current) {
+        stageRef.current?.focus({ preventScroll: true });
+      }
+    } else {
+      propsRef.current.onTextSelected(null);
+    }
+  };
+
+  const removePreviewObject = (id: string, object: Textbox) => {
+    const canvas = canvasRef.current;
+    if (canvas) {
+      canvas.remove(object);
+      canvas.requestRenderAll();
+    }
+    attachedOverlaysRef.current = attachedOverlaysRef.current.filter((item) => item !== object);
+    textObjectsRef.current.delete(id);
+  };
+
+  const finishTextEdit = () => {
+    if (compositionActiveRef.current) {
+      finishAfterCompositionRef.current = true;
+      return false;
+    }
+    const session = textSessionRef.current;
+    if (!session) return true;
+    textSessionRef.current = null;
+    if (session.source === 'fabric' && session.object.isEditing) session.object.exitEditing();
+
+    const text = normalizeTextContent(session.object.text);
+    if (text !== session.object.text) {
+      session.object.set('text', text);
+      session.object.initDimensions();
+      session.object.setCoords();
+    }
+    const next = text
+      ? putTextOverlay(session.baseSnapshot, serializeTextObject(session.baseSnapshot, session.object, session.baseline))
+      : removeTextOverlay(session.baseSnapshot, session.id);
+
+    if (!text) {
+      removePreviewObject(session.id, session.object);
+      propsRef.current.onTextSelected(null);
+    }
+    snapshotRef.current = next;
+    propsRef.current.onTextDraftChange(session.id, text);
+    propsRef.current.onTextCommitted(next);
+    canvasRef.current?.requestRenderAll();
+    return true;
+  };
+  finishTextEditRef.current = finishTextEdit;
+
+  const cancelTextEdit = () => {
+    if (compositionActiveRef.current) return;
+    const session = textSessionRef.current;
+    if (!session) return;
+    textSessionRef.current = null;
+    if (session.isNew) {
+      removePreviewObject(session.id, session.object);
+      propsRef.current.onTextSelected(null);
+    } else {
+      session.object.set('text', session.baseline.text);
+      session.object.initDimensions();
+      session.object.setCoords();
+      propsRef.current.onTextDraftChange(session.id, session.baseline.text);
+      propsRef.current.onTextSelected(session.id, session.baseline.text);
+    }
+    if (session.source === 'fabric' && session.object.isEditing) session.object.exitEditing();
+    if (session.source === 'textarea' && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    canvasRef.current?.requestRenderAll();
+  };
+
+  const beginTextSession = (id: string, object: Textbox, source: TextEditSession['source']) => {
+    const active = textSessionRef.current;
+    if (active?.id === id) {
+      if (source === 'textarea') active.source = source;
+      return;
+    }
+    if (active && !finishTextEdit()) return;
+    const baseSnapshot = snapshotRef.current;
+    const baseline = baseSnapshot.scene.find(
+      (item): item is TextOverlaySnapshot => item.role === 'text' && item.id === id,
+    );
+    if (!baseline) return;
+    textSessionRef.current = { id, object, baseline, baseSnapshot, isNew: false, source };
+  };
+
+  const addText = () => {
+    if (documentActionsDisabledRef.current || cropRef.current || panModeRef.current || spacePanRef.current) {
+      throw new Error('Tắt chế độ di chuyển hoặc hoàn tất công cụ đang mở trước khi thêm chữ.');
+    }
+    if (textSessionRef.current && !finishTextEdit()) return;
+    const canvas = canvasRef.current;
+    if (!canvas) throw new Error('Vùng chỉnh sửa đang khởi tạo. Hãy thử thêm chữ lại.');
+    const id = crypto.randomUUID();
+    const { object, overlay } = createDefaultTextObject(snapshotRef.current, id);
+    registerTextObject(id, object);
+    attachedOverlaysRef.current = [...attachedOverlaysRef.current, object];
+    canvas.add(object);
+    canvas.setActiveObject(object);
+    const source = window.matchMedia('(max-width: 767px)').matches ? 'textarea' : 'fabric';
+    textSessionRef.current = {
+      id,
+      object,
+      baseline: overlay,
+      baseSnapshot: snapshotRef.current,
+      isNew: true,
+      source,
+    };
+    propsRef.current.onTextSelected(id, overlay.text, true);
+    if (source === 'fabric') {
+      object.enterEditing();
+      object.selectAll();
+    }
+    canvas.requestRenderAll();
+  };
+
+  const beginTextareaEdit = (id: string) => {
+    const object = textObjectsRef.current.get(id);
+    if (!object) return;
+    const active = textSessionRef.current;
+    if (active?.id === id) {
+      active.source = 'textarea';
+      if (object.isEditing) object.exitEditing();
+      return;
+    }
+    beginTextSession(id, object, 'textarea');
+  };
+
+  const setTextDraft = (id: string, rawText: string) => {
+    const object = textObjectsRef.current.get(id);
+    if (!object) return;
+    const text = normalizeTextContent(rawText);
+    if (object.text !== text) {
+      object.set('text', text);
+      object.initDimensions();
+      object.setCoords();
+      canvasRef.current?.requestRenderAll();
+    }
+  };
+
+  const deleteSelectedText = () => {
+    if (!finishTextEdit()) return;
+    const id = selectedTextIdRef.current;
+    const object = id ? textObjectsRef.current.get(id) : undefined;
+    if (!id || !object) return;
+    const next = removeTextOverlay(snapshotRef.current, id);
+    if (next === snapshotRef.current) return;
+    removePreviewObject(id, object);
+    snapshotRef.current = next;
+    canvasRef.current?.discardActiveObject();
+    propsRef.current.onTextSelected(null);
+    propsRef.current.onTextCommitted(next);
+  };
+
+  useImperativeHandle(ref, () => ({
+    addText,
+    beginTextareaEdit,
+    cancelTextEdit,
+    deleteSelectedText,
+    finishTextEdit,
+    setTextDraft,
+  }));
 
   const detachImage = (target: FabricImage) => {
     const canvas = canvasRef.current;
@@ -102,11 +331,14 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
   };
 
   const syncScene = (canvas: Canvas) => {
+    const selectedId = selectedTextIdRef.current;
     const current = attachedImageRef.current;
     const next = imageRef.current;
     const currentOverlays = attachedOverlaysRef.current;
     if (currentOverlays.length) canvas.remove(...currentOverlays);
     attachedOverlaysRef.current = [];
+    textObjectsRef.current = new Map();
+    textIdsRef.current = new WeakMap();
     if (current && current !== next) {
       canvas.remove(current);
       attachedImageRef.current = null;
@@ -148,8 +380,15 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
     }
 
     const snapshot = snapshotRef.current;
-    const overlays = createFabricOverlays(snapshot.scene);
+    const textSnapshots = snapshot.scene.filter((item): item is TextOverlaySnapshot => item.role === 'text');
+    const overlays = createFabricOverlays(snapshot.scene, true);
     overlays.forEach((object) => applyDocumentTransform(object, snapshot.documentTransform));
+    let textIndex = 0;
+    overlays.forEach((object) => {
+      if (!(object instanceof Textbox)) return;
+      const text = textSnapshots[textIndex++];
+      if (text) registerTextObject(text.id, object);
+    });
     if (overlays.length) canvas.add(...overlays);
     attachedOverlaysRef.current = overlays;
 
@@ -166,6 +405,13 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
     clip.set({ width: snapshot.document.width, height: snapshot.document.height });
     documentClipRef.current = clip;
     canvas.clipPath = clip;
+    const canInteract = !documentActionsDisabledRef.current && !cropRef.current && !panModeRef.current && !spacePanRef.current;
+    for (const object of textObjectsRef.current.values()) {
+      object.set({ selectable: canInteract, evented: canInteract, hasControls: canInteract, hasBorders: canInteract });
+    }
+    const selected = canInteract && selectedId ? textObjectsRef.current.get(selectedId) : undefined;
+    if (selected) canvas.setActiveObject(selected);
+    else if (canvas.getActiveObject() instanceof Textbox) canvas.discardActiveObject();
     canvas.requestRenderAll();
   };
 
@@ -181,6 +427,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
     let active = true;
     let canvas: Canvas | undefined;
     let observer: ResizeObserver | undefined;
+    const removeCanvasListeners: Array<() => void> = [];
 
     const resize = (width: number, height: number) => {
       if (!canvas) return;
@@ -227,6 +474,51 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
       setViewportSize(initialSize);
       syncScene(canvas);
 
+      removeCanvasListeners.push(
+        canvas.on('selection:created', (event) => notifyTextSelection(event.selected[0])),
+        canvas.on('selection:updated', (event) => notifyTextSelection(event.selected[0])),
+        canvas.on('selection:cleared', () => notifyTextSelection(undefined)),
+        canvas.on('text:editing:entered', ({ target }) => {
+          if (target instanceof Textbox) {
+            const id = textIdsRef.current.get(target);
+            if (id) beginTextSession(id, target, 'fabric');
+          }
+        }),
+        canvas.on('text:editing:exited', ({ target }) => {
+          const id = textIdsRef.current.get(target);
+          const session = textSessionRef.current;
+          if (id && session?.id === id && session.source === 'fabric') finishTextEditRef.current();
+        }),
+        canvas.on('text:changed', ({ target }) => {
+          if (!(target instanceof Textbox)) return;
+          const id = textIdsRef.current.get(target);
+          if (!id) return;
+          const text = normalizeTextContent(target.text);
+          if (target.text !== text) {
+            target.set('text', text);
+            target.initDimensions();
+            target.setCoords();
+            canvas?.requestRenderAll();
+          }
+          propsRef.current.onTextDraftChange(id, text);
+        }),
+        canvas.on('object:modified', ({ target }) => {
+          if (!(target instanceof Textbox)) return;
+          const id = textIdsRef.current.get(target);
+          if (!id) return;
+          const session = textSessionRef.current;
+          if (session?.id === id && !finishTextEditRef.current()) return;
+          const current = snapshotRef.current;
+          const baseline = current.scene.find(
+            (item): item is TextOverlaySnapshot => item.role === 'text' && item.id === id,
+          );
+          if (!baseline) return;
+          const next = putTextOverlay(current, serializeTextObject(current, target, baseline));
+          snapshotRef.current = next;
+          propsRef.current.onTextCommitted(next);
+        }),
+      );
+
       const currentDocument = documentSizeRef.current;
       if (validSize(currentDocument)) {
         const initialZoom = fitZoom(currentDocument, initialSize);
@@ -253,6 +545,8 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
     return () => {
       active = false;
       observer?.disconnect();
+      removeCanvasListeners.forEach((removeListener) => removeListener());
+      finishTextEditRef.current();
       const currentCanvas = canvas;
       if (currentCanvas) {
         const attachedImage = attachedImageRef.current;
@@ -272,6 +566,50 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
       detachImageRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const onCompositionStart = () => { compositionActiveRef.current = true; };
+    const onCompositionEnd = () => {
+      compositionActiveRef.current = false;
+      if (finishAfterCompositionRef.current) {
+        finishAfterCompositionRef.current = false;
+        finishTextEditRef.current();
+      }
+    };
+    document.addEventListener('compositionstart', onCompositionStart, true);
+    document.addEventListener('compositionend', onCompositionEnd, true);
+    return () => {
+      document.removeEventListener('compositionstart', onCompositionStart, true);
+      document.removeEventListener('compositionend', onCompositionEnd, true);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.isComposing || compositionActiveRef.current
+        || event.defaultPrevented || !textSessionRef.current) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      cancelTextEdit();
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const canInteract = !documentActionsDisabled && !crop && !panMode && !spacePan;
+    for (const object of textObjectsRef.current.values()) {
+      object.set({ selectable: canInteract, evented: canInteract, hasControls: canInteract, hasBorders: canInteract });
+    }
+    if (!canInteract) {
+      if (textSessionRef.current) finishTextEdit();
+      canvas.discardActiveObject();
+      propsRef.current.onTextSelected(null);
+    }
+    canvas.requestRenderAll();
+  }, [crop, documentActionsDisabled, panMode, spacePan]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -428,6 +766,17 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
   };
 
   const handleStageKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Delete' && !event.nativeEvent.isComposing) {
+      const target = event.target;
+      const isTextInput = target instanceof HTMLElement
+        && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
+      const active = canvasRef.current?.getActiveObject();
+      if (!isTextInput && active instanceof Textbox && !active.isEditing) {
+        event.preventDefault();
+        deleteSelectedText();
+        return;
+      }
+    }
     if (event.code !== 'Space') return;
     event.preventDefault();
     if (event.repeat) return;
@@ -450,16 +799,16 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
   return (
     <>
       <div className="canvas-toolbar" role="toolbar" aria-label="Thao tác tài liệu">
-        <button type="button" aria-label="Xoay trái 90 độ" title="Xoay trái 90°" disabled={documentActionsDisabled} onClick={() => onTransform('rotate-left')}>
+        <button type="button" aria-label="Xoay trái 90 độ" title="Xoay trái 90°" disabled={documentActionsDisabled} onClick={() => { if (finishTextEdit()) onTransform('rotate-left'); }}>
           Xoay trái
         </button>
-        <button type="button" aria-label="Xoay phải 90 độ" title="Xoay phải 90°" disabled={documentActionsDisabled} onClick={() => onTransform('rotate-right')}>
+        <button type="button" aria-label="Xoay phải 90 độ" title="Xoay phải 90°" disabled={documentActionsDisabled} onClick={() => { if (finishTextEdit()) onTransform('rotate-right'); }}>
           Xoay phải
         </button>
-        <button type="button" aria-label="Lật ngang" title="Lật ngang" disabled={documentActionsDisabled} onClick={() => onTransform('flip-horizontal')}>
+        <button type="button" aria-label="Lật ngang" title="Lật ngang" disabled={documentActionsDisabled} onClick={() => { if (finishTextEdit()) onTransform('flip-horizontal'); }}>
           Lật ngang
         </button>
-        <button type="button" aria-label="Lật dọc" title="Lật dọc" disabled={documentActionsDisabled} onClick={() => onTransform('flip-vertical')}>
+        <button type="button" aria-label="Lật dọc" title="Lật dọc" disabled={documentActionsDisabled} onClick={() => { if (finishTextEdit()) onTransform('flip-vertical'); }}>
           Lật dọc
         </button>
         <button
@@ -473,6 +822,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
         </button>
       </div>
       <div
+        ref={stageRef}
         className={`canvas-stage${panMode || spacePan ? ' canvas-stage--pan' : ''}${panning ? ' canvas-stage--panning' : ''}`}
         tabIndex={0}
         aria-label="Vùng xem ảnh. Giữ Space và kéo, hoặc bật chế độ Di chuyển."
@@ -549,4 +899,6 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
       </div>
     </>
   );
-}
+});
+
+export default EditorCanvas;

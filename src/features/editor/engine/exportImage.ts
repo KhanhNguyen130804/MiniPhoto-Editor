@@ -8,6 +8,7 @@ import { applyDocumentTransform } from './geometry';
 import { createFabricOverlays } from './scene';
 import type { EditorSnapshot } from './snapshot';
 import { applyImageAdjustments } from './adjustmentFilters';
+import { ensureSnapshotTextFonts } from './text';
 
 export type ExportFormat = 'png' | 'jpeg';
 
@@ -67,6 +68,8 @@ export async function exportImage(
   if (sources.length !== 1 || !source || snapshot.scene[0] !== source || source.assetId !== candidate.assetId) {
     throw new Error('Snapshot không có ảnh nguồn hợp lệ ở lớp nền.');
   }
+
+  await ensureSnapshotTextFonts(snapshot);
 
   const renderer = new StaticCanvas(document.createElement('canvas'), {
     width: snapshot.document.width,

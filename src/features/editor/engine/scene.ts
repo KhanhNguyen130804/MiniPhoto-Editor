@@ -1,9 +1,9 @@
 import { Circle, Line, Rect, Textbox, type FabricObject } from 'fabric';
-import type { SceneObjectSnapshot, ShapeOverlaySnapshot, TextOverlaySnapshot } from './snapshot';
+import { MAX_TEXT_CODE_POINTS, normalizeTextContent, type SceneObjectSnapshot, type ShapeOverlaySnapshot, type TextOverlaySnapshot } from './snapshot';
 
-const MAX_OVERLAYS = 50;
+export const MAX_OVERLAYS = 50;
 
-function overlayOptions(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot) {
+function overlayOptions(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot, interactiveText: boolean) {
   if (!snapshot.id || ![snapshot.left, snapshot.top, snapshot.scaleX, snapshot.scaleY,
     snapshot.angle, snapshot.opacity].every(Number.isFinite)
     || snapshot.scaleX <= 0 || snapshot.scaleY <= 0 || snapshot.opacity < 0 || snapshot.opacity > 1) {
@@ -19,10 +19,12 @@ function overlayOptions(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot) {
     visible: snapshot.visible,
     originX: 'left' as const,
     originY: 'top' as const,
-    selectable: false,
-    evented: false,
-    hasControls: false,
-    hasBorders: false,
+    selectable: interactiveText && snapshot.role === 'text',
+    evented: interactiveText && snapshot.role === 'text',
+    hasControls: interactiveText && snapshot.role === 'text',
+    hasBorders: interactiveText && snapshot.role === 'text',
+    lockUniScaling: true,
+    lockScalingY: false,
   };
 }
 
@@ -31,14 +33,15 @@ function validStroke(stroke: string | null, strokeWidth: number): boolean {
     && (stroke !== null || strokeWidth === 0);
 }
 
-export function createFabricOverlay(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot): FabricObject {
-  const common = overlayOptions(snapshot);
+export function createFabricOverlay(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot, interactiveText = false): FabricObject {
+  const common = overlayOptions(snapshot, interactiveText);
   if (snapshot.role === 'text') {
     if (!snapshot.text || !snapshot.fontFamily || !Number.isFinite(snapshot.width) || snapshot.width <= 0
+      || Array.from(snapshot.text).length > MAX_TEXT_CODE_POINTS || normalizeTextContent(snapshot.text) !== snapshot.text
       || !Number.isFinite(snapshot.fontSize) || snapshot.fontSize < 1 || !snapshot.fill) {
       throw new TypeError('Invalid text overlay.');
     }
-    return new Textbox(snapshot.text, {
+    const textbox = new Textbox(snapshot.text, {
       ...common,
       left: snapshot.left,
       top: snapshot.top,
@@ -47,6 +50,8 @@ export function createFabricOverlay(snapshot: TextOverlaySnapshot | ShapeOverlay
       fontSize: snapshot.fontSize,
       fill: snapshot.fill,
     });
+    if (interactiveText) textbox.setControlsVisibility({ ml: false, mt: false, mr: false, mb: false });
+    return textbox;
   }
 
   if (!validStroke(snapshot.stroke, snapshot.strokeWidth)) throw new TypeError('Invalid shape stroke.');
@@ -88,8 +93,8 @@ export function createFabricOverlay(snapshot: TextOverlaySnapshot | ShapeOverlay
   });
 }
 
-export function createFabricOverlays(scene: readonly SceneObjectSnapshot[]): FabricObject[] {
+export function createFabricOverlays(scene: readonly SceneObjectSnapshot[], interactiveText = false): FabricObject[] {
   const overlays = scene.filter((item): item is TextOverlaySnapshot | ShapeOverlaySnapshot => item.role !== 'source-image');
   if (overlays.length > MAX_OVERLAYS) throw new RangeError('A document cannot contain more than 50 overlays.');
-  return overlays.map(createFabricOverlay);
+  return overlays.map((overlay) => createFabricOverlay(overlay, interactiveText));
 }
