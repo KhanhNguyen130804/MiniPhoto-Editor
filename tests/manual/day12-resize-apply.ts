@@ -46,8 +46,8 @@ function fixtureScene(snapshot: EditorSnapshot): EditorSnapshot {
     radius: 4, fill: '#22c55e', stroke: null, strokeWidth: 0, ...transform,
   };
   const line: ShapeOverlaySnapshot = {
-    id: 'day12-line', role: 'shape', shape: 'line', left: 18, top: 40,
-    x2: 36, y2: 40, stroke: '#ffffff', strokeWidth: 2, ...transform,
+    id: 'day12-line', role: 'shape', shape: 'line', left: 27, top: 40,
+    x2: 9, y2: 0, stroke: '#ffffff', strokeWidth: 2, ...transform,
   };
   const text: TextOverlaySnapshot = {
     id: 'day12-text', role: 'text', left: 38, top: 5, width: 20,

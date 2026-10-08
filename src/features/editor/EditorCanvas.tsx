@@ -1,11 +1,12 @@
 import { Canvas, FabricImage, Rect, Textbox, type FabricObject, type TMat2D } from 'fabric';
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { applyDocumentTransform, type GeometryCommand } from './engine/geometry';
-import type { EditorSnapshot, TextOverlaySnapshot } from './engine/snapshot';
+import type { EditorSnapshot, ShapeOverlaySnapshot, TextOverlaySnapshot } from './engine/snapshot';
 import { createFabricOverlays } from './engine/scene';
 import { resizeCropRect, type CropHandle, type CropRatio, type CropRect } from './engine/crop';
 import { applyImageAdjustments } from './engine/adjustmentFilters';
 import { applyTextPropertiesPatch, createDefaultTextObject, ensureTextFontReady, normalizeTextContent, putTextOverlay, removeTextOverlay, restoreTextObject, serializeTextObject, textPropertiesFromObject, validateTextPropertiesPatch, type TextProperties, type TextPropertiesPatch } from './engine/text';
+import { applyShapePropertiesPatch, createDefaultShapeObject, putShapeOverlay, restoreShapeObject, serializeShapeObject, shapePropertiesFromObject, type SelectedShape, type ShapeKind, type ShapePropertiesPatch } from './engine/shapes';
 
 type Size = { width: number; height: number };
 
@@ -18,9 +19,12 @@ type EditorCanvasProps = {
   crop: { ratio: CropRatio; rect: CropRect } | null;
   onCropChange: (rect: CropRect) => void;
   selectedTextId: string | null;
+  selectedShapeId: string | null;
   onTextSelected: (id: string | null, text?: string, isNew?: boolean, properties?: TextProperties, cancelled?: boolean) => void;
   onTextDraftChange: (id: string, text: string) => void;
   onTextCommitted: (snapshot: EditorSnapshot) => void;
+  onShapeSelected: (shape: SelectedShape | null) => void;
+  onShapeCommitted: (snapshot: EditorSnapshot) => void;
   children: ReactNode;
 };
 
@@ -33,6 +37,12 @@ export type EditorCanvasHandle = {
   beginTextPropertiesEdit: (id: string) => boolean;
   setTextProperties: (id: string, patch: TextPropertiesPatch) => Promise<boolean>;
   setTextDraft: (id: string, text: string) => void;
+  addShape: (shape: ShapeKind) => void;
+  beginShapePropertiesEdit: (id: string) => boolean;
+  setShapeProperties: (id: string, patch: ShapePropertiesPatch) => boolean;
+  finishShapePropertiesEdit: () => boolean;
+  cancelShapePropertiesEdit: () => void;
+  finishEditorEdit: () => boolean;
 };
 
 type TextEditSession = {
@@ -44,6 +54,13 @@ type TextEditSession = {
   source: 'fabric' | 'textarea' | 'properties';
   pending?: Promise<void>;
   finishAfterPending?: boolean;
+};
+
+type ShapeEditSession = {
+  id: string;
+  object: FabricObject;
+  baseline: ShapeOverlaySnapshot;
+  baseSnapshot: EditorSnapshot;
 };
 
 type PanStart = { pointerId: number; x: number; y: number; transform: TMat2D };
@@ -99,9 +116,12 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
   crop,
   onCropChange,
   selectedTextId,
+  selectedShapeId,
   onTextSelected,
   onTextDraftChange,
   onTextCommitted,
+  onShapeSelected,
+  onShapeCommitted,
   children,
 }, ref) {
   const documentSize: Size = snapshot.document;
@@ -115,16 +135,20 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
   const attachedOverlaysRef = useRef<FabricObject[]>([]);
   const textObjectsRef = useRef(new Map<string, Textbox>());
   const textIdsRef = useRef(new WeakMap<FabricObject, string>());
+  const shapeObjectsRef = useRef(new Map<string, FabricObject>());
+  const shapeIdsRef = useRef(new WeakMap<FabricObject, string>());
   const textSessionRef = useRef<TextEditSession | null>(null);
+  const shapeSessionRef = useRef<ShapeEditSession | null>(null);
   const finishTextEditRef = useRef<() => boolean>(() => true);
   const compositionActiveRef = useRef(false);
   const finishAfterCompositionRef = useRef(false);
   const selectedTextIdRef = useRef(selectedTextId);
+  const selectedShapeIdRef = useRef(selectedShapeId);
   const documentActionsDisabledRef = useRef(documentActionsDisabled);
   const panModeRef = useRef(false);
   const spacePanRef = useRef(false);
   const cropRef = useRef(crop);
-  const propsRef = useRef({ onTransform, onTextSelected, onTextDraftChange, onTextCommitted });
+  const propsRef = useRef({ onTransform, onTextSelected, onTextDraftChange, onTextCommitted, onShapeSelected, onShapeCommitted });
   const documentClipRef = useRef<Rect | null>(null);
   const viewportSizeRef = useRef<Size>({ width: 0, height: 0 });
   const disposeQueueRef = useRef<Promise<void>>(Promise.resolve());
@@ -143,27 +167,45 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
   imageRef.current = image;
   snapshotRef.current = snapshot;
   selectedTextIdRef.current = selectedTextId;
+  selectedShapeIdRef.current = selectedShapeId;
   documentActionsDisabledRef.current = documentActionsDisabled;
   panModeRef.current = panMode;
   spacePanRef.current = spacePan;
   cropRef.current = crop;
-  propsRef.current = { onTransform, onTextSelected, onTextDraftChange, onTextCommitted };
+  propsRef.current = { onTransform, onTextSelected, onTextDraftChange, onTextCommitted, onShapeSelected, onShapeCommitted };
 
   const registerTextObject = (id: string, object: Textbox) => {
     textObjectsRef.current.set(id, object);
     textIdsRef.current.set(object, id);
   };
 
-  const notifyTextSelection = (object: FabricObject | undefined) => {
+  const registerShapeObject = (id: string, object: FabricObject) => {
+    shapeObjectsRef.current.set(id, object);
+    shapeIdsRef.current.set(object, id);
+  };
+
+  const notifySelection = (object: FabricObject | undefined) => {
     const id = object ? textIdsRef.current.get(object) : undefined;
     const textbox = id ? textObjectsRef.current.get(id) : undefined;
     if (id && textbox) {
+      propsRef.current.onShapeSelected(null);
       propsRef.current.onTextSelected(id, normalizeTextContent(textbox.text), false, textPropertiesFromObject(textbox));
       if (!textbox.isEditing && !cropRef.current && !panModeRef.current && !spacePanRef.current) {
         stageRef.current?.focus({ preventScroll: true });
       }
+      return;
+    }
+    propsRef.current.onTextSelected(null);
+    const shapeId = object ? shapeIdsRef.current.get(object) : undefined;
+    const shapeObject = shapeId ? shapeObjectsRef.current.get(shapeId) : undefined;
+    const baseline = shapeId ? snapshotRef.current.scene.find(
+      (item): item is ShapeOverlaySnapshot => item.role === 'shape' && item.id === shapeId,
+    ) : undefined;
+    if (shapeId && shapeObject && baseline) {
+      propsRef.current.onShapeSelected({ id: shapeId, shape: baseline.shape, properties: shapePropertiesFromObject(shapeObject) });
+      if (!cropRef.current && !panModeRef.current && !spacePanRef.current) stageRef.current?.focus({ preventScroll: true });
     } else {
-      propsRef.current.onTextSelected(null);
+      propsRef.current.onShapeSelected(null);
     }
   };
 
@@ -213,6 +255,67 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
   };
   finishTextEditRef.current = finishTextEdit;
 
+  const finishShapePropertiesEdit = () => {
+    const session = shapeSessionRef.current;
+    if (!session) return true;
+    shapeSessionRef.current = null;
+    const next = putShapeOverlay(
+      session.baseSnapshot,
+      serializeShapeObject(session.baseSnapshot, session.object, session.baseline),
+    );
+    snapshotRef.current = next;
+    propsRef.current.onShapeSelected({
+      id: session.id,
+      shape: session.baseline.shape,
+      properties: shapePropertiesFromObject(session.object),
+    });
+    propsRef.current.onShapeCommitted(next);
+    canvasRef.current?.requestRenderAll();
+    return true;
+  };
+
+  const finishEditorEdit = () => {
+    if (!finishTextEdit()) return false;
+    return finishShapePropertiesEdit();
+  };
+
+  const cancelShapePropertiesEdit = () => {
+    const session = shapeSessionRef.current;
+    if (!session) return;
+    shapeSessionRef.current = null;
+    restoreShapeObject(session.baseSnapshot, session.object, session.baseline);
+    propsRef.current.onShapeSelected({
+      id: session.id,
+      shape: session.baseline.shape,
+      properties: shapePropertiesFromObject(session.object),
+    });
+    canvasRef.current?.requestRenderAll();
+  };
+
+  const beginShapePropertiesEdit = (id: string): boolean => {
+    if (documentActionsDisabledRef.current || cropRef.current || panModeRef.current || spacePanRef.current) return false;
+    const object = shapeObjectsRef.current.get(id);
+    if (!object) return false;
+    if (shapeSessionRef.current?.id === id) return true;
+    if (!finishEditorEdit()) return false;
+    const baseSnapshot = snapshotRef.current;
+    const baseline = baseSnapshot.scene.find(
+      (item): item is ShapeOverlaySnapshot => item.role === 'shape' && item.id === id,
+    );
+    if (!baseline) return false;
+    shapeSessionRef.current = { id, object, baseline, baseSnapshot };
+    return true;
+  };
+
+  const setShapeProperties = (id: string, patch: ShapePropertiesPatch): boolean => {
+    const session = shapeSessionRef.current;
+    if (!session || session.id !== id) return false;
+    const properties = applyShapePropertiesPatch(session.object, patch);
+    propsRef.current.onShapeSelected({ id, shape: session.baseline.shape, properties });
+    canvasRef.current?.requestRenderAll();
+    return true;
+  };
+
   const cancelTextEdit = () => {
     if (compositionActiveRef.current) return;
     const session = textSessionRef.current;
@@ -239,7 +342,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       if (source === 'textarea') active.source = source;
       return;
     }
-    if (active && !finishTextEdit()) return;
+    if (active && !finishEditorEdit()) return;
     const baseSnapshot = snapshotRef.current;
     const baseline = baseSnapshot.scene.find(
       (item): item is TextOverlaySnapshot => item.role === 'text' && item.id === id,
@@ -253,7 +356,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     const object = textObjectsRef.current.get(id);
     if (!object) return false;
     if (textSessionRef.current?.id === id && textSessionRef.current.source === 'properties') return true;
-    if (textSessionRef.current && !finishTextEdit()) return false;
+    if (!finishEditorEdit()) return false;
     const baseSnapshot = snapshotRef.current;
     const baseline = baseSnapshot.scene.find(
       (item): item is TextOverlaySnapshot => item.role === 'text' && item.id === id,
@@ -310,7 +413,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     if (documentActionsDisabledRef.current || cropRef.current || panModeRef.current || spacePanRef.current) {
       throw new Error('Tắt chế độ di chuyển hoặc hoàn tất công cụ đang mở trước khi thêm chữ.');
     }
-    if (textSessionRef.current && !finishTextEdit()) return;
+    if (!finishEditorEdit()) return;
     const canvas = canvasRef.current;
     if (!canvas) throw new Error('Vùng chỉnh sửa đang khởi tạo. Hãy thử thêm chữ lại.');
     const id = crypto.randomUUID();
@@ -333,6 +436,27 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       object.enterEditing();
       object.selectAll();
     }
+    canvas.requestRenderAll();
+  };
+
+  const addShape = (shape: ShapeKind) => {
+    if (documentActionsDisabledRef.current || cropRef.current || panModeRef.current || spacePanRef.current) {
+      throw new Error('Hoàn tất hoặc đóng công cụ đang mở trước khi thêm hình.');
+    }
+    if (!finishEditorEdit()) return;
+    const canvas = canvasRef.current;
+    if (!canvas) throw new Error('Vùng chỉnh sửa đang khởi tạo. Hãy thử thêm hình lại.');
+    const id = crypto.randomUUID();
+    const current = snapshotRef.current;
+    const { object, overlay } = createDefaultShapeObject(current, id, shape);
+    const next = putShapeOverlay(current, overlay);
+    registerShapeObject(id, object);
+    attachedOverlaysRef.current = [...attachedOverlaysRef.current, object];
+    canvas.add(object);
+    canvas.setActiveObject(object);
+    snapshotRef.current = next;
+    propsRef.current.onShapeSelected({ id, shape, properties: shapePropertiesFromObject(object) });
+    propsRef.current.onShapeCommitted(next);
     canvas.requestRenderAll();
   };
 
@@ -361,7 +485,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
   };
 
   const deleteSelectedText = () => {
-    if (!finishTextEdit()) return;
+    if (!finishEditorEdit()) return;
     const id = selectedTextIdRef.current;
     const object = id ? textObjectsRef.current.get(id) : undefined;
     if (!id || !object) return;
@@ -383,6 +507,12 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     beginTextPropertiesEdit,
     setTextProperties,
     setTextDraft,
+    addShape,
+    beginShapePropertiesEdit,
+    setShapeProperties,
+    finishShapePropertiesEdit,
+    cancelShapePropertiesEdit,
+    finishEditorEdit,
   }));
 
   const detachImage = (target: FabricImage) => {
@@ -392,12 +522,15 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       attachedImageRef.current = null;
       canvas.remove(...attachedOverlaysRef.current);
       attachedOverlaysRef.current = [];
+      textObjectsRef.current.clear();
+      shapeObjectsRef.current.clear();
       canvas.requestRenderAll();
     }
   };
 
   const syncScene = (canvas: Canvas) => {
-    const selectedId = selectedTextIdRef.current;
+    const selectedTextId = selectedTextIdRef.current;
+    const selectedShapeId = selectedShapeIdRef.current;
     const current = attachedImageRef.current;
     const next = imageRef.current;
     const currentOverlays = attachedOverlaysRef.current;
@@ -405,6 +538,8 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     attachedOverlaysRef.current = [];
     textObjectsRef.current = new Map();
     textIdsRef.current = new WeakMap();
+    shapeObjectsRef.current = new Map();
+    shapeIdsRef.current = new WeakMap();
     if (current && current !== next) {
       canvas.remove(current);
       attachedImageRef.current = null;
@@ -446,14 +581,14 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     }
 
     const snapshot = snapshotRef.current;
-    const textSnapshots = snapshot.scene.filter((item): item is TextOverlaySnapshot => item.role === 'text');
+    const overlaySnapshots = snapshot.scene.filter((item) => item.role !== 'source-image');
     const overlays = createFabricOverlays(snapshot.scene, true);
     overlays.forEach((object) => applyDocumentTransform(object, snapshot.documentTransform));
-    let textIndex = 0;
-    overlays.forEach((object) => {
-      if (!(object instanceof Textbox)) return;
-      const text = textSnapshots[textIndex++];
-      if (text) registerTextObject(text.id, object);
+    overlays.forEach((object, index) => {
+      const overlay = overlaySnapshots[index];
+      if (!overlay) return;
+      if (overlay.role === 'text' && object instanceof Textbox) registerTextObject(overlay.id, object);
+      else if (overlay.role === 'shape') registerShapeObject(overlay.id, object);
     });
     if (overlays.length) canvas.add(...overlays);
     attachedOverlaysRef.current = overlays;
@@ -472,15 +607,21 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     documentClipRef.current = clip;
     canvas.clipPath = clip;
     const canInteract = !documentActionsDisabledRef.current && !cropRef.current && !panModeRef.current && !spacePanRef.current;
-    for (const object of textObjectsRef.current.values()) {
+    for (const object of [...textObjectsRef.current.values(), ...shapeObjectsRef.current.values()]) {
       object.set({ selectable: canInteract, evented: canInteract, hasControls: canInteract, hasBorders: canInteract });
     }
-    const selected = canInteract && selectedId ? textObjectsRef.current.get(selectedId) : undefined;
+    const selected = canInteract && selectedTextId ? textObjectsRef.current.get(selectedTextId)
+      : canInteract && selectedShapeId ? shapeObjectsRef.current.get(selectedShapeId) : undefined;
     if (selected) {
       canvas.setActiveObject(selected);
-      propsRef.current.onTextSelected(selectedId!, normalizeTextContent(selected.text), false, textPropertiesFromObject(selected));
+      notifySelection(selected);
     }
-    else if (canvas.getActiveObject() instanceof Textbox) canvas.discardActiveObject();
+    else {
+      const activeObject = canvas.getActiveObject();
+      if (activeObject && (activeObject instanceof Textbox || shapeIdsRef.current.has(activeObject))) {
+        canvas.discardActiveObject();
+      }
+    }
     canvas.requestRenderAll();
   };
 
@@ -544,9 +685,9 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       syncScene(canvas);
 
       removeCanvasListeners.push(
-        canvas.on('selection:created', (event) => notifyTextSelection(event.selected[0])),
-        canvas.on('selection:updated', (event) => notifyTextSelection(event.selected[0])),
-        canvas.on('selection:cleared', () => notifyTextSelection(undefined)),
+        canvas.on('selection:created', (event) => notifySelection(event.selected[0])),
+        canvas.on('selection:updated', (event) => notifySelection(event.selected[0])),
+        canvas.on('selection:cleared', () => notifySelection(undefined)),
         canvas.on('text:editing:entered', ({ target }) => {
           if (target instanceof Textbox) {
             const id = textIdsRef.current.get(target);
@@ -572,20 +713,33 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
           propsRef.current.onTextDraftChange(id, text);
         }),
         canvas.on('object:modified', ({ target }) => {
-          if (!(target instanceof Textbox)) return;
-          const id = textIdsRef.current.get(target);
+          if (target instanceof Textbox) {
+            const id = textIdsRef.current.get(target);
+            if (!id) return;
+            const session = textSessionRef.current;
+            if (session?.id === id && !finishTextEditRef.current()) return;
+            const current = snapshotRef.current;
+            const baseline = current.scene.find(
+              (item): item is TextOverlaySnapshot => item.role === 'text' && item.id === id,
+            );
+            if (!baseline) return;
+            const next = putTextOverlay(current, serializeTextObject(current, target, baseline));
+            snapshotRef.current = next;
+            propsRef.current.onTextSelected(id, normalizeTextContent(target.text), false, textPropertiesFromObject(target));
+            propsRef.current.onTextCommitted(next);
+            return;
+          }
+          const id = shapeIdsRef.current.get(target);
           if (!id) return;
-          const session = textSessionRef.current;
-          if (session?.id === id && !finishTextEditRef.current()) return;
           const current = snapshotRef.current;
           const baseline = current.scene.find(
-            (item): item is TextOverlaySnapshot => item.role === 'text' && item.id === id,
+            (item): item is ShapeOverlaySnapshot => item.role === 'shape' && item.id === id,
           );
           if (!baseline) return;
-          const next = putTextOverlay(current, serializeTextObject(current, target, baseline));
+          const next = putShapeOverlay(current, serializeShapeObject(current, target, baseline));
           snapshotRef.current = next;
-          propsRef.current.onTextSelected(id, normalizeTextContent(target.text), false, textPropertiesFromObject(target));
-          propsRef.current.onTextCommitted(next);
+          propsRef.current.onShapeSelected({ id, shape: baseline.shape, properties: shapePropertiesFromObject(target) });
+          propsRef.current.onShapeCommitted(next);
         }),
       );
 
@@ -616,7 +770,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       active = false;
       observer?.disconnect();
       removeCanvasListeners.forEach((removeListener) => removeListener());
-      finishTextEditRef.current();
+      finishEditorEdit();
       const currentCanvas = canvas;
       if (currentCanvas) {
         const attachedImage = attachedImageRef.current;
@@ -657,10 +811,11 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape' || event.isComposing || compositionActiveRef.current
-        || event.defaultPrevented || !textSessionRef.current) return;
+        || event.defaultPrevented || (!textSessionRef.current && !shapeSessionRef.current)) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      cancelTextEdit();
+      if (textSessionRef.current) cancelTextEdit();
+      else cancelShapePropertiesEdit();
     };
     window.addEventListener('keydown', onKeyDown, true);
     return () => window.removeEventListener('keydown', onKeyDown, true);
@@ -670,15 +825,16 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     const canvas = canvasRef.current;
     if (!canvas) return;
     const canInteract = !documentActionsDisabled && !crop && !panMode && !spacePan;
-    for (const object of textObjectsRef.current.values()) {
+    for (const object of [...textObjectsRef.current.values(), ...shapeObjectsRef.current.values()]) {
       object.set({ selectable: canInteract, evented: canInteract, hasControls: canInteract, hasBorders: canInteract });
     }
     if (!canInteract) {
       const fontPending = Boolean(textSessionRef.current?.pending);
-      if (textSessionRef.current) finishTextEdit();
+      if (textSessionRef.current || shapeSessionRef.current) finishEditorEdit();
       if (!fontPending) {
         canvas.discardActiveObject();
         propsRef.current.onTextSelected(null);
+        propsRef.current.onShapeSelected(null);
       }
     }
     canvas.requestRenderAll();

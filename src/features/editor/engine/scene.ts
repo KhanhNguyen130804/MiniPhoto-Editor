@@ -3,7 +3,7 @@ import { MAX_TEXT_CODE_POINTS, normalizeTextContent, type SceneObjectSnapshot, t
 
 export const MAX_OVERLAYS = 50;
 
-function overlayOptions(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot, interactiveText: boolean) {
+function overlayOptions(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot, interactive: boolean) {
   if (!snapshot.id || ![snapshot.left, snapshot.top, snapshot.scaleX, snapshot.scaleY,
     snapshot.angle, snapshot.opacity].every(Number.isFinite)
     || snapshot.scaleX <= 0 || snapshot.scaleY <= 0 || snapshot.opacity < 0 || snapshot.opacity > 1) {
@@ -19,22 +19,26 @@ function overlayOptions(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot, in
     visible: snapshot.visible,
     originX: 'left' as const,
     originY: 'top' as const,
-    selectable: interactiveText && snapshot.role === 'text',
-    evented: interactiveText && snapshot.role === 'text',
-    hasControls: interactiveText && snapshot.role === 'text',
-    hasBorders: interactiveText && snapshot.role === 'text',
-    lockUniScaling: true,
+    selectable: interactive,
+    evented: interactive,
+    hasControls: interactive,
+    hasBorders: interactive,
+    lockUniScaling: snapshot.role === 'text' || (snapshot.role === 'shape' && snapshot.shape === 'circle'),
     lockScalingY: false,
   };
 }
 
 function validStroke(stroke: string | null, strokeWidth: number): boolean {
   return Number.isFinite(strokeWidth) && strokeWidth >= 0 && strokeWidth <= 50
-    && (stroke !== null || strokeWidth === 0);
+    && (stroke === null ? strokeWidth === 0 : /^#[\da-f]{6}$/i.test(stroke));
 }
 
-export function createFabricOverlay(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot, interactiveText = false): FabricObject {
-  const common = overlayOptions(snapshot, interactiveText);
+function validFill(fill: string | null): boolean {
+  return fill === null || /^#[\da-f]{6}$/i.test(fill);
+}
+
+export function createFabricOverlay(snapshot: TextOverlaySnapshot | ShapeOverlaySnapshot, interactive = false): FabricObject {
+  const common = overlayOptions(snapshot, interactive);
   if (snapshot.role === 'text') {
     if (!snapshot.text || !['Noto Sans', 'Noto Serif'].includes(snapshot.fontFamily)
       || !Number.isFinite(snapshot.width) || snapshot.width <= 0
@@ -58,11 +62,12 @@ export function createFabricOverlay(snapshot: TextOverlaySnapshot | ShapeOverlay
       textAlign: snapshot.textAlign,
       fill: snapshot.fill,
     });
-    if (interactiveText) textbox.setControlsVisibility({ ml: false, mt: false, mr: false, mb: false });
+    if (interactive) textbox.setControlsVisibility({ ml: false, mt: false, mr: false, mb: false });
     return textbox;
   }
 
-  if (!validStroke(snapshot.stroke, snapshot.strokeWidth)) throw new TypeError('Invalid shape stroke.');
+  if (!validStroke(snapshot.stroke, snapshot.strokeWidth)
+    || (snapshot.shape !== 'line' && !validFill(snapshot.fill))) throw new TypeError('Invalid shape style.');
   if (snapshot.shape === 'rectangle') {
     if (!Number.isFinite(snapshot.width) || !Number.isFinite(snapshot.height)
       || snapshot.width <= 0 || snapshot.height <= 0) throw new TypeError('Invalid rectangle overlay.');
@@ -91,18 +96,22 @@ export function createFabricOverlay(snapshot: TextOverlaySnapshot | ShapeOverlay
   }
 
   if (![snapshot.x2, snapshot.y2].every(Number.isFinite)
-    || (snapshot.left === snapshot.x2 && snapshot.top === snapshot.y2)
+    || (snapshot.x2 === 0 && snapshot.y2 === 0)
     || snapshot.strokeWidth <= 0 || !snapshot.stroke) throw new TypeError('Invalid line overlay.');
-  return new Line([snapshot.left, snapshot.top, snapshot.x2, snapshot.y2], {
+  return new Line([-snapshot.x2, -snapshot.y2, snapshot.x2, snapshot.y2], {
     ...common,
+    originX: 'center',
+    originY: 'center',
+    left: snapshot.left,
+    top: snapshot.top,
     stroke: snapshot.stroke,
     strokeWidth: snapshot.strokeWidth,
     fill: null,
   });
 }
 
-export function createFabricOverlays(scene: readonly SceneObjectSnapshot[], interactiveText = false): FabricObject[] {
+export function createFabricOverlays(scene: readonly SceneObjectSnapshot[], interactive = false): FabricObject[] {
   const overlays = scene.filter((item): item is TextOverlaySnapshot | ShapeOverlaySnapshot => item.role !== 'source-image');
   if (overlays.length > MAX_OVERLAYS) throw new RangeError('A document cannot contain more than 50 overlays.');
-  return overlays.map((overlay) => createFabricOverlay(overlay, interactiveText));
+  return overlays.map((overlay) => createFabricOverlay(overlay, interactive));
 }

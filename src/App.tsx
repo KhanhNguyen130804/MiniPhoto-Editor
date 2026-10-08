@@ -22,6 +22,7 @@ import {
 } from './features/editor/engine/imageImport';
 import { createImageBaselineSnapshot, MAX_TEXT_CODE_POINTS, normalizeTextContent, type EditorSnapshot, type PresetId } from './features/editor/engine/snapshot';
 import { ensureTextFontReady, validateTextPropertiesPatch, type TextProperties, type TextPropertiesPatch } from './features/editor/engine/text';
+import { DEFAULT_SHAPE_COLOR, validateShapePropertiesPatch, type SelectedShape, type ShapeKind, type ShapePropertiesPatch } from './features/editor/engine/shapes';
 import {
   cropDocument as cropEditorDocument,
   resizeDocument as resizeEditorDocument,
@@ -44,6 +45,7 @@ type PreviewState = 'empty' | 'loading' | 'error';
 type Route = 'home' | 'editor' | 'privacy' | 'not-found';
 type ImportStatus = { phase: 'idle' | 'loading' } | { phase: 'error'; message: string };
 type TextNumericField = 'x' | 'y' | 'angle' | 'width' | 'fontSize';
+type ShapeNumericField = 'strokeWidth';
 type PendingCrop = { ratio: CropRatio; rect: CropRect };
 type CropFields = Record<keyof CropRect, string>;
 type PendingResize = {
@@ -171,7 +173,7 @@ function HelpDialogTrigger({ dark = false }: { dark?: boolean }) {
         <p className="eyebrow">MINIPHOTO EDITOR</p>
         <h2 id="help-dialog-title">Bắt đầu thật đơn giản</h2>
         <p id="help-dialog-copy">
-          Bạn có thể mở ảnh JPG, PNG hoặc WebP tĩnh, cắt, đổi kích thước, xoay/lật, chọn bộ lọc, tinh chỉnh màu, thêm chú thích tiếng Việt và tải ảnh xuống. Lưu bản nháp và công cụ hình khối sẽ được bổ sung sau.
+          Bạn có thể mở ảnh JPG, PNG hoặc WebP tĩnh, cắt, đổi kích thước, xoay/lật, chọn bộ lọc, tinh chỉnh màu, thêm chú thích tiếng Việt, tạo hình khối và tải ảnh xuống. Lưu bản nháp sẽ được bổ sung sau.
         </p>
         <div className="dialog-note">
           <strong>Cần trợ giúp ngay?</strong>
@@ -285,14 +287,14 @@ function HomePage({
           <div className="hero-copy">
             <p className="eyebrow"><span className="eyebrow-dot" /> BỘ CÔNG CỤ ẢNH GỌN NHẸ</p>
             <h1 id="home-title">Chỉnh ảnh đẹp,<br /><span>theo cách của bạn.</span></h1>
-            <p className="hero-lede">Cắt ảnh, tinh chỉnh màu sắc, thêm chú thích tiếng Việt và tải kết quả xuống — trong một không gian đơn giản, dễ dùng.</p>
+            <p className="hero-lede">Cắt ảnh, tinh chỉnh màu sắc, thêm chú thích tiếng Việt, tạo hình khối và tải kết quả xuống — trong một không gian đơn giản, dễ dùng.</p>
             <ul className="feature-list" aria-label="Công cụ hiện có">
               <li><span aria-hidden="true">✓</span> Cắt &amp; đổi kích thước</li>
               <li><span aria-hidden="true">✓</span> Chỉnh màu</li>
               <li><span aria-hidden="true">✓</span> Xoay &amp; lật</li>
-              <li><span aria-hidden="true">✓</span> Bộ lọc &amp; chú thích tiếng Việt</li>
+              <li><span aria-hidden="true">✓</span> Bộ lọc, chữ &amp; hình khối</li>
             </ul>
-            <p className="build-note">Ảnh được đọc trong trình duyệt. Có thể cắt, đổi kích thước, chỉnh màu, áp bộ lọc, thêm chú thích và tải ảnh; lưu bản nháp cùng công cụ hình khối sẽ được bổ sung sau.</p>
+            <p className="build-note">Ảnh được đọc trong trình duyệt. Có thể cắt, đổi kích thước, chỉnh màu, áp bộ lọc, thêm chữ, tạo hình khối và tải ảnh; lưu bản nháp sẽ được bổ sung sau.</p>
           </div>
 
           <section className={`import-card${state === 'error' || status.phase === 'error' ? ' import-card--error' : ''}`} aria-labelledby="import-title">
@@ -368,6 +370,7 @@ function EditorPage({
   onApplyResize,
   onApplyAdjustments,
   onApplyText,
+  onApplyShape,
   onChoose,
   replaceButtonRef,
   detachImageRef,
@@ -384,13 +387,14 @@ function EditorPage({
   onApplyResize: (snapshot: EditorSnapshot) => void;
   onApplyAdjustments: (snapshot: EditorSnapshot) => void;
   onApplyText: (snapshot: EditorSnapshot) => void;
+  onApplyShape: (snapshot: EditorSnapshot) => void;
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
 }) {
   const tools = ['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'];
   const canvasActionsRef = useRef<EditorCanvasHandle>(null);
-  const finishTextEdit = () => canvasActionsRef.current?.finishTextEdit() !== false;
+  const finishTextEdit = () => canvasActionsRef.current?.finishEditorEdit() !== false;
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const exportDialogRef = useRef<HTMLDialogElement>(null);
@@ -412,6 +416,11 @@ function EditorPage({
   const [filterOpen, setFilterOpen] = useState(false);
   const [textToolOpen, setTextToolOpen] = useState(false);
   const [selectedText, setSelectedText] = useState<{ id: string; text: string; isNew: boolean; properties: TextProperties } | null>(null);
+  const [shapeToolOpen, setShapeToolOpen] = useState(false);
+  const [selectedShape, setSelectedShape] = useState<SelectedShape | null>(null);
+  const [shapeError, setShapeError] = useState('');
+  const [shapePropertyInputs, setShapePropertyInputs] = useState<Partial<Record<ShapeNumericField, string>>>({});
+  const shapePropertyErrorRef = useRef('');
   const [textError, setTextError] = useState('');
   const [textFontError, setTextFontError] = useState('');
   const [textFontLoading, setTextFontLoading] = useState(false);
@@ -437,6 +446,8 @@ function EditorPage({
       setSelectedText(null);
       return;
     }
+    setShapeToolOpen(false);
+    setSelectedShape(null);
     setSelectedText((current) => ({
       id,
       text,
@@ -450,6 +461,103 @@ function EditorPage({
     setAdjustmentOpen(false);
     setFilterOpen(false);
     setPanelOpen(true);
+  };
+
+  const handleShapeSelected = (shape: SelectedShape | null) => {
+    if (!shape) {
+      setSelectedShape(null);
+      setShapePropertyInputs({});
+      return;
+    }
+    setShapeError('');
+    shapePropertyErrorRef.current = '';
+    setShapePropertyInputs({});
+    setSelectedText(null);
+    setSelectedShape(shape);
+    setShapeToolOpen(true);
+    setTextToolOpen(false);
+    setAdjustmentOpen(false);
+    setFilterOpen(false);
+    setPanelOpen(true);
+  };
+
+  const beginShapePropertyOperation = (id = selectedShape?.id): boolean => {
+    if (!id) return false;
+    const began = canvasActionsRef.current?.beginShapePropertiesEdit(id) ?? false;
+    if (began) {
+      shapePropertyErrorRef.current = '';
+      setShapeError('');
+    }
+    return began;
+  };
+
+  const finishShapePropertyOperation = () => {
+    if (shapePropertyErrorRef.current) {
+      canvasActionsRef.current?.cancelShapePropertiesEdit();
+      shapePropertyErrorRef.current = '';
+      setShapePropertyInputs({});
+      setShapeError('');
+      return false;
+    }
+    const finished = canvasActionsRef.current?.finishShapePropertiesEdit() ?? true;
+    setShapePropertyInputs({});
+    return finished;
+  };
+
+  const changeShapeProperties = (patch: ShapePropertiesPatch) => {
+    const selected = selectedShape;
+    if (!selected || !beginShapePropertyOperation(selected.id)) return;
+    try {
+      canvasActionsRef.current?.setShapeProperties(selected.id, patch);
+      canvasActionsRef.current?.finishShapePropertiesEdit();
+      shapePropertyErrorRef.current = '';
+      setShapeError('');
+    } catch (error) {
+      canvasActionsRef.current?.cancelShapePropertiesEdit();
+      const message = error instanceof Error ? error.message : 'Không thể áp dụng thuộc tính hình.';
+      setShapeError(message);
+    }
+  };
+
+  const changeContinuousShapeProperty = (field: ShapeNumericField, rawValue: string) => {
+    setShapePropertyInputs((current) => ({ ...current, [field]: rawValue }));
+    const selected = selectedShape;
+    const value = Number(rawValue);
+    const patch: ShapePropertiesPatch = {
+      [field]: value,
+      ...(field === 'strokeWidth' && value > 0 && selected?.properties.stroke === null
+        ? { stroke: DEFAULT_SHAPE_COLOR }
+        : {}),
+    };
+    try {
+      if (!rawValue.trim() || !selected) throw new RangeError('Nhập một giá trị hợp lệ.');
+      validateShapePropertiesPatch(selected.shape, patch);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Giá trị thuộc tính hình không hợp lệ.';
+      shapePropertyErrorRef.current = message;
+      setShapeError(message);
+      return;
+    }
+    shapePropertyErrorRef.current = '';
+    setShapeError('');
+    if (!beginShapePropertyOperation(selected.id)) return;
+    try {
+      canvasActionsRef.current?.setShapeProperties(selected.id, patch);
+    } catch (error) {
+      shapePropertyErrorRef.current = error instanceof Error ? error.message : 'Giá trị thuộc tính hình không hợp lệ.';
+      setShapeError(shapePropertyErrorRef.current);
+    }
+  };
+
+  const addShape = (shape: ShapeKind) => {
+    if (cropPending || resizePending || exportBusy || adjustmentOperationActive || status.phase === 'loading') return;
+    if (!finishTextEdit()) return;
+    setShapeError('');
+    try {
+      canvasActionsRef.current?.addShape(shape);
+    } catch (error) {
+      setShapeError(error instanceof Error ? error.message : 'Không thể thêm hình. Hãy thử lại.');
+    }
   };
 
   const handleTextDraftChange = (id: string, text: string) => {
@@ -545,7 +653,23 @@ function EditorPage({
     } else {
       setAdjustmentOpen(false);
       setFilterOpen(false);
+      setShapeToolOpen(false);
       setTextToolOpen(true);
+      setPanelOpen(true);
+    }
+  };
+
+  const toggleShapeTool = () => {
+    if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    if (!finishTextEdit()) return;
+    if (shapeToolOpen) {
+      setShapeToolOpen(false);
+      setPanelOpen(false);
+    } else {
+      setAdjustmentOpen(false);
+      setFilterOpen(false);
+      setTextToolOpen(false);
+      setShapeToolOpen(true);
       setPanelOpen(true);
     }
   };
@@ -652,6 +776,7 @@ function EditorPage({
     setAdjustmentOpen(false);
     setFilterOpen(false);
     setTextToolOpen(false);
+    setShapeToolOpen(false);
     setPanelOpen(true);
     const rect = createCropRect(snapshot.document, 'free');
     if (!rect) return;
@@ -672,6 +797,7 @@ function EditorPage({
     setAdjustmentOpen(false);
     setFilterOpen(false);
     setTextToolOpen(false);
+    setShapeToolOpen(false);
     const base = { width: snapshot.document.width, height: snapshot.document.height };
     setResizePending({
       base,
@@ -854,6 +980,7 @@ function EditorPage({
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     if (!finishTextEdit()) return;
     setTextToolOpen(false);
+    setShapeToolOpen(false);
     if (adjustmentOpen) {
       setAdjustmentOpen(false);
       setPanelOpen(false);
@@ -867,6 +994,7 @@ function EditorPage({
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     if (!finishTextEdit()) return;
     setTextToolOpen(false);
+    setShapeToolOpen(false);
     if (filterOpen) {
       setFilterOpen(false);
       setPanelOpen(false);
@@ -885,7 +1013,7 @@ function EditorPage({
     onApplyAdjustments(next);
   };
   const activeTool = cropPending ? 'Cắt' : resizePending ? 'Kích thước'
-    : filterOpen ? 'Bộ lọc' : adjustmentOpen ? 'Điều chỉnh' : textToolOpen ? 'Chữ' : null;
+    : filterOpen ? 'Bộ lọc' : adjustmentOpen ? 'Điều chỉnh' : textToolOpen ? 'Chữ' : shapeToolOpen ? 'Hình khối' : null;
   const documentActionLocked = exportBusy || textFontLoading || Boolean(cropPending || resizePending || adjustmentOperationActive);
   const displayedAdjustments = adjustmentPreview ?? snapshotAdjustments(snapshot);
   const previewCanvasSnapshot = previewSnapshot;
@@ -940,15 +1068,16 @@ function EditorPage({
               className={`tool-item${activeTool === tool ? ' tool-item--active' : ''}`}
               type="button"
               key={tool}
-              disabled={(!['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ'].includes(tool)) || exportBusy || status.phase === 'loading'
+              disabled={(!['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'].includes(tool)) || exportBusy || status.phase === 'loading'
                 || Boolean((cropPending || resizePending) && activeTool !== tool)}
-              aria-pressed={['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ'].includes(tool) ? activeTool === tool : undefined}
+              aria-pressed={['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'].includes(tool) ? activeTool === tool : undefined}
               onClick={tool === 'Cắt'
                 ? (cropPending ? cancelCrop : startCrop)
                 : tool === 'Kích thước' ? (resizePending ? cancelResize : startResize)
-                  : tool === 'Điều chỉnh' ? toggleAdjustments
+                    : tool === 'Điều chỉnh' ? toggleAdjustments
                     : tool === 'Bộ lọc' ? toggleFilters
-                      : tool === 'Chữ' ? toggleTextTool : undefined}
+                      : tool === 'Chữ' ? toggleTextTool
+                        : tool === 'Hình khối' ? toggleShapeTool : undefined}
             >
               <span className="tool-item__icon" aria-hidden="true">{['⌗', '↔', '◐', '✧', 'T', '◇'][index]}</span>
               <span>{tool}</span>
@@ -967,9 +1096,12 @@ function EditorPage({
             crop={cropPending}
             onCropChange={updateCropRect}
             selectedTextId={selectedText?.id ?? null}
+            selectedShapeId={selectedShape?.id ?? null}
             onTextSelected={handleTextSelected}
             onTextDraftChange={handleTextDraftChange}
             onTextCommitted={onApplyText}
+            onShapeSelected={handleShapeSelected}
+            onShapeCommitted={onApplyShape}
           >
             <EditorStatus status={status} />
           </EditorCanvas>
@@ -1289,11 +1421,99 @@ function EditorPage({
               )}
               {textError && <p className="text-controls__error" role="alert">{textError}</p>}
             </section>
+          ) : shapeToolOpen ? (
+            <section className="text-controls" aria-labelledby="shape-controls-title">
+              <div className="text-controls__intro">
+                <strong id="shape-controls-title">Hình khối</strong>
+                <p>Thêm hình, chọn trên ảnh rồi kéo hoặc dùng handle để chỉnh hình học.</p>
+              </div>
+              <div className="text-controls__actions" aria-label="Thêm hình">
+                <button type="button" onClick={() => addShape('rectangle')} disabled={documentActionLocked || snapshot.scene.filter((item) => item.role !== 'source-image').length >= 50}>
+                  Chữ nhật
+                </button>
+                <button type="button" onClick={() => addShape('circle')} disabled={documentActionLocked || snapshot.scene.filter((item) => item.role !== 'source-image').length >= 50}>
+                  Hình tròn
+                </button>
+                <button type="button" onClick={() => addShape('line')} disabled={documentActionLocked || snapshot.scene.filter((item) => item.role !== 'source-image').length >= 50}>
+                  Đường thẳng
+                </button>
+              </div>
+              {selectedShape ? (
+                <>
+                  {selectedShape.shape !== 'line' && (
+                    <div className="text-controls__grid">
+                      <label className="text-controls__field" htmlFor="selected-shape-fill">
+                        Màu tô
+                        <input id="selected-shape-fill" type="color"
+                          value={selectedShape.properties.fill ?? DEFAULT_SHAPE_COLOR}
+                          disabled={documentActionLocked || selectedShape.properties.fill === null}
+                          onFocus={() => beginShapePropertyOperation(selectedShape.id)}
+                          onChange={(event) => changeShapeProperties({ fill: event.currentTarget.value })} />
+                      </label>
+                      <label className="text-controls__field" htmlFor="selected-shape-transparent">
+                        Tô hình
+                        <span>
+                          <input id="selected-shape-transparent" type="checkbox"
+                            checked={selectedShape.properties.fill === null}
+                            disabled={documentActionLocked}
+                            onChange={(event) => changeShapeProperties({
+                              fill: event.currentTarget.checked ? null : DEFAULT_SHAPE_COLOR,
+                            })} />
+                          Trong suốt
+                        </span>
+                      </label>
+                    </div>
+                  )}
+                  <div className="text-controls__grid">
+                    <label className="text-controls__field" htmlFor="selected-shape-stroke">
+                      Màu viền
+                      <input id="selected-shape-stroke" type="color"
+                        value={selectedShape.properties.stroke ?? DEFAULT_SHAPE_COLOR}
+                        disabled={documentActionLocked}
+                        onFocus={() => beginShapePropertyOperation(selectedShape.id)}
+                        onChange={(event) => changeShapeProperties({ stroke: event.currentTarget.value })} />
+                    </label>
+                    <label className="text-controls__field" htmlFor="selected-shape-stroke-width">
+                      Độ rộng viền (px)
+                      <input id="selected-shape-stroke-width" type="number"
+                        min={selectedShape.shape === 'line' ? 0.01 : 0} max="50" step="any"
+                        value={shapePropertyInputs.strokeWidth ?? String(selectedShape.properties.strokeWidth)}
+                        disabled={documentActionLocked}
+                        onFocus={() => beginShapePropertyOperation(selectedShape.id)}
+                        onChange={(event) => changeContinuousShapeProperty('strokeWidth', event.currentTarget.value)}
+                        onBlur={finishShapePropertyOperation}
+                        onKeyDown={(event) => { if (event.key === 'Enter') event.currentTarget.blur(); }} />
+                    </label>
+                  </div>
+                  <label className="text-controls__field" htmlFor="selected-shape-opacity">
+                    Độ mờ ({Math.round(selectedShape.properties.opacity * 100)}%)
+                    <input id="selected-shape-opacity" type="range" min="0" max="100" step="1"
+                      value={Math.round(selectedShape.properties.opacity * 100)} disabled={documentActionLocked}
+                      onPointerDown={() => beginShapePropertyOperation(selectedShape.id)}
+                      onKeyDown={() => beginShapePropertyOperation(selectedShape.id)}
+                      onChange={(event) => {
+                        try {
+                          canvasActionsRef.current?.setShapeProperties(selectedShape.id, {
+                            opacity: Number(event.currentTarget.value) / 100,
+                          });
+                        } catch (error) {
+                          shapePropertyErrorRef.current = error instanceof Error ? error.message : 'Độ mờ không hợp lệ.';
+                          setShapeError(shapePropertyErrorRef.current);
+                        }
+                      }}
+                      onPointerUp={finishShapePropertyOperation} onBlur={finishShapePropertyOperation} />
+                  </label>
+                </>
+              ) : (
+                <p className="text-controls__count">Chọn một hình trên ảnh hoặc thêm hình mới.</p>
+              )}
+              {shapeError && <p className="text-controls__error" role="alert">{shapeError}</p>}
+            </section>
           ) : (
             <div className="properties-empty">
               <span className="properties-empty__icon" aria-hidden="true">◇</span>
               <strong>Công cụ chưa khả dụng</strong>
-              <p>Chọn Cắt, Kích thước, Điều chỉnh, Bộ lọc hoặc Chữ để thao tác với ảnh.</p>
+              <p>Chọn Cắt, Kích thước, Điều chỉnh, Bộ lọc, Chữ hoặc Hình khối để thao tác với ảnh.</p>
             </div>
           )}
           <div className="properties-note">
@@ -1303,6 +1523,7 @@ function EditorPage({
             : resizePending ? 'Áp dụng sẽ scale toàn bộ nội dung và có thể hoàn tác bằng Undo.'
                 : adjustmentOpen || filterOpen ? 'Màu chỉ tác động ảnh nền; hình học và lớp phủ được giữ nguyên.'
                   : textToolOpen ? 'Hoàn tất mỗi phiên sửa chữ thành một bước trong lịch sử; Escape hủy phiên hiện tại.'
+                    : shapeToolOpen ? 'Thêm hình, thao tác hình học hoặc đổi thuộc tính được lưu trong lịch sử.'
                   : 'Các thay đổi được lưu trong lịch sử của phiên chỉnh sửa.'}</p>
           </div>
         </aside>
@@ -1708,6 +1929,7 @@ export default function App() {
           onApplyResize={applyResize}
           onApplyAdjustments={applyAdjustments}
           onApplyText={applyAdjustments}
+          onApplyShape={applyAdjustments}
           onChoose={openFilePicker}
           replaceButtonRef={editorReplaceButtonRef}
           detachImageRef={detachImageRef}

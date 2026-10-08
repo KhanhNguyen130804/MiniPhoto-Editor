@@ -54,8 +54,8 @@ function fixtureScene(snapshot: EditorSnapshot): EditorSnapshot {
     radius: 5, fill: '#22c55e', stroke: null, strokeWidth: 0, ...transform,
   };
   const line: ShapeOverlaySnapshot = {
-    id: 'day10-line', role: 'shape', shape: 'line', left: 10, top: 32,
-    x2: 42, y2: 32, stroke: '#ffffff', strokeWidth: 2, ...transform,
+    id: 'day10-line', role: 'shape', shape: 'line', left: 26, top: 32,
+    x2: 16, y2: 0, stroke: '#ffffff', strokeWidth: 2, ...transform,
   };
   const hidden: ShapeOverlaySnapshot = {
     id: 'day10-hidden', role: 'shape', shape: 'rectangle', left: 12, top: 24,

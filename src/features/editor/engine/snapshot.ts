@@ -76,6 +76,7 @@ export type ShapeOverlaySnapshot = OverlayTransformSnapshot & (
   | {
     readonly role: 'shape';
     readonly shape: 'line';
+    /** Half-vector from the line center to an endpoint; translation stays in left/top. */
     readonly x2: number;
     readonly y2: number;
     readonly stroke: string;
