@@ -7,6 +7,7 @@ type LayersPanelProps = {
   disabled: boolean;
   onSelect: (id: string) => void;
   onVisibilityChange: (id: string, visible: boolean) => void;
+  onMove: (id: string, direction: 'up' | 'down') => void;
   onDelete: (id: string) => void;
 };
 
@@ -24,6 +25,7 @@ export default function LayersPanel({
   disabled,
   onSelect,
   onVisibilityChange,
+  onMove,
   onDelete,
 }: LayersPanelProps) {
   const layers = getLayerList(snapshot);
@@ -36,7 +38,7 @@ export default function LayersPanel({
         <span>{overlayCount} lớp phủ</span>
       </div>
       <ul className="layers-list">
-        {layers.map((layer) => {
+        {layers.map((layer, index) => {
           const isBackground = layer.role === 'source-image';
           const isSelected = !isBackground && layer.id === selectedId;
           return (
@@ -52,6 +54,31 @@ export default function LayersPanel({
                 <span className="layer-row__icon" aria-hidden="true">{layerIcon(layer.role, layer.name)}</span>
                 <span className="layer-row__name" title={layer.name}>{layer.name}</span>
               </button>
+              {!isBackground ? (
+                <>
+                  <button
+                    className="layer-row__action"
+                    type="button"
+                    disabled={disabled || index === 0}
+                    aria-label={`Đưa ${layer.name} lên một bậc`}
+                    title={`Đưa ${layer.name} lên một bậc`}
+                    onClick={() => onMove(layer.id, 'up')}
+                  >↑</button>
+                  <button
+                    className="layer-row__action"
+                    type="button"
+                    disabled={disabled || index === layers.length - 2}
+                    aria-label={`Đưa ${layer.name} xuống một bậc`}
+                    title={`Đưa ${layer.name} xuống một bậc`}
+                    onClick={() => onMove(layer.id, 'down')}
+                  >↓</button>
+                </>
+              ) : (
+                <>
+                  <span className="layer-row__fixed" aria-hidden="true" />
+                  <span className="layer-row__fixed" aria-hidden="true" />
+                </>
+              )}
               <button
                 className="layer-row__action"
                 type="button"

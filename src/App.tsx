@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
+import { useEffect, useMemo, useRef, useState, type FocusEvent as ReactFocusEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent, type RefObject } from 'react';
 import type { FabricImage } from 'fabric';
 import EditorCanvas, { type EditorCanvasHandle } from './features/editor/EditorCanvas';
 import LayersPanel from './features/editor/LayersPanel';
@@ -1033,8 +1033,68 @@ function EditorPage({
   const previewCanvasSnapshot = previewSnapshot;
   const hasVisibleContent = snapshot.scene.some((item) => item.visible);
 
+  useEffect(() => {
+    const finishNudge = () => canvasActionsRef.current?.finishNudge();
+    window.addEventListener('blur', finishNudge);
+    return () => window.removeEventListener('blur', finishNudge);
+  }, []);
+
+  const handleEditorKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const target = event.target instanceof HTMLElement ? event.target : null;
+    const native = event.nativeEvent;
+    if (native.isComposing || native.keyCode === 229 || target?.isContentEditable
+      || Boolean(target?.closest('[contenteditable="true"]'))
+      || Boolean(target?.closest('dialog[open]'))
+      || Boolean(target && ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))) return;
+    if (event.altKey) return;
+
+    const key = event.key.toLowerCase();
+    const hasModifier = event.ctrlKey || event.metaKey;
+    if (hasModifier && (key === 'z' || (key === 'y' && event.ctrlKey))) {
+      if (documentActionLocked || !finishTextEdit()) return;
+      event.preventDefault();
+      if ((key === 'z' && event.shiftKey) || key === 'y') onRedo();
+      else onUndo();
+      return;
+    }
+    if (hasModifier || !target) return;
+
+    const inScene = target.closest('.canvas-stage, .layers-panel');
+    if ((key === 'delete' || key === 'backspace') && !event.shiftKey && inScene) {
+      if (canvasActionsRef.current?.deleteSelectedOverlay()) event.preventDefault();
+      return;
+    }
+
+    const inNudgeArea = target.closest('.canvas-stage')
+      || Boolean(target.closest('.layer-row')?.querySelector('.layer-row__select[aria-pressed="true"]'));
+    if (inNudgeArea && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      const handled = canvasActionsRef.current?.nudgeSelected(event.key as 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight', event.shiftKey ? 10 : 1);
+      if (handled) event.preventDefault();
+      return;
+    }
+    canvasActionsRef.current?.finishNudge();
+  };
+
+  const handleEditorKeyUp = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+      canvasActionsRef.current?.releaseNudgeKey(event.key as 'ArrowUp' | 'ArrowDown' | 'ArrowLeft' | 'ArrowRight');
+    }
+  };
+
+  const isNudgeFocus = (target: EventTarget | null): boolean => target instanceof Element
+    && (Boolean(target.closest('.canvas-stage'))
+      || Boolean(target.closest('.layer-row')?.querySelector('.layer-row__select[aria-pressed="true"]')));
+  const finishNudgeOnBlur = (event: ReactFocusEvent<HTMLDivElement>) => {
+    if (isNudgeFocus(event.target) && !isNudgeFocus(event.relatedTarget)) canvasActionsRef.current?.finishNudge();
+  };
+
   return (
-    <div className="editor-shell">
+    <div
+      className="editor-shell"
+      onKeyDownCapture={handleEditorKeyDown}
+      onKeyUpCapture={handleEditorKeyUp}
+      onBlurCapture={finishNudgeOnBlur}
+    >
       <header className="editor-topbar">
         <div className="editor-topbar__start">
           <a className="back-link" href="/" aria-label="Về trang chủ">←</a>
@@ -1255,6 +1315,10 @@ function EditorPage({
               onSelect={(id) => { canvasActionsRef.current?.selectOverlay(id); }}
               onVisibilityChange={(id, visible) => {
                 canvasActionsRef.current?.setOverlayVisibility(id, visible);
+                setActivePanelTab('layers');
+              }}
+              onMove={(id, direction) => {
+                canvasActionsRef.current?.moveOverlay(id, direction);
                 setActivePanelTab('layers');
               }}
               onDelete={(id) => {

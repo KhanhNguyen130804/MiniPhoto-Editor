@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Day 19 — layers and keyboard</title>
+    <link rel="stylesheet" href="/src/app.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Day 19 — layers and keyboard</h1>
+      <p>Kiểm tra reorder một bậc, nudge theo document pixel, history và export z-order.</p>
+      <button id="run" type="button">Chạy kiểm tra Day 19</button>
+      <pre id="results" aria-live="polite">Chưa chạy.</pre>
+      <h2>Kiểm tra giao diện bàn phím</h2>
+      <ol>
+        <li>Dùng Tab đến từng nút layer; xác nhận nhãn Đưa lên/Đưa xuống, visibility, xóa; nút ở biên và ảnh nền không thể reorder.</li>
+        <li>Reorder hai shape chồng nhau một bậc; kiểm tra thứ tự panel và pixel PNG đổi đúng. Undo/Redo phải phục hồi cả z-order.</li>
+        <li>Chọn layer bằng bàn phím; Arrow di chuyển 1 px, Shift+Arrow 10 px. Giữ phím để lặp; nhả phím rồi Undo một lần phải trả đúng vị trí ban đầu.</li>
+        <li>Kiểm tra Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z và Ctrl+Y; Delete/Backspace chỉ xóa layer đã chọn khi canvas hoặc danh sách layer đang focus.</li>
+        <li>Trong input, textarea, contenteditable và khi IME đang composition, phím editor không được chặn nhập liệu/native undo.</li>
+        <li>Tab/Enter/Escape trong hộp thoại xuất ảnh phải giữ focus trong hộp thoại, cho phép tạo file và đóng hộp thoại.</li>
+      </ol>
+    </main>
+    <script type="module" src="./day19-layers-keyboard.ts"></script>
+  </body>
+</html>

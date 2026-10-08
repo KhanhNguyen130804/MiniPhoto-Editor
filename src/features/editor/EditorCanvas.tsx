@@ -5,7 +5,8 @@ import type { EditorSnapshot, ShapeOverlaySnapshot, TextOverlaySnapshot } from '
 import { createFabricOverlays } from './engine/scene';
 import { resizeCropRect, type CropHandle, type CropRatio, type CropRect } from './engine/crop';
 import { applyImageAdjustments } from './engine/adjustmentFilters';
-import { deleteOverlayLayer, setLayerVisibility } from './engine/layers';
+import { deleteOverlayLayer, nudgeOverlayLayer, reorderOverlayLayer, setLayerVisibility } from './engine/layers';
+import { createNudgeInput, pressNudgeKey, releaseNudgeKey as releaseTrackedNudgeKey, type NudgeInput, type NudgeKey } from './engine/nudgeInput';
 import { applyTextPropertiesPatch, createDefaultTextObject, ensureTextFontReady, normalizeTextContent, putTextOverlay, removeTextOverlay, restoreTextObject, serializeTextObject, textPropertiesFromObject, validateTextPropertiesPatch, type TextProperties, type TextPropertiesPatch } from './engine/text';
 import { applyShapePropertiesPatch, createDefaultShapeObject, putShapeOverlay, restoreShapeObject, serializeShapeObject, shapePropertiesFromObject, type SelectedShape, type ShapeKind, type ShapePropertiesPatch } from './engine/shapes';
 
@@ -47,7 +48,12 @@ export type EditorCanvasHandle = {
   finishEditorEdit: () => boolean;
   selectOverlay: (id: string) => boolean;
   setOverlayVisibility: (id: string, visible: boolean) => void;
-  deleteOverlay: (id: string) => void;
+  moveOverlay: (id: string, direction: 'up' | 'down') => void;
+  deleteOverlay: (id: string) => boolean;
+  deleteSelectedOverlay: () => boolean;
+  nudgeSelected: (key: NudgeKey, step: number) => boolean;
+  releaseNudgeKey: (key: NudgeKey) => void;
+  finishNudge: () => void;
 };
 
 type TextEditSession = {
@@ -70,6 +76,13 @@ type ShapeEditSession = {
 
 type PanStart = { pointerId: number; x: number; y: number; transform: TMat2D };
 type CropDrag = { pointerId: number; handle: CropHandle; start: { x: number; y: number }; rect: CropRect };
+type NudgeSession = {
+  id: string;
+  role: 'text' | 'shape';
+  object: FabricObject;
+  baseSnapshot: EditorSnapshot;
+  input: NudgeInput;
+};
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
@@ -146,6 +159,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
   const syncingSelectionRef = useRef(false);
   const textSessionRef = useRef<TextEditSession | null>(null);
   const shapeSessionRef = useRef<ShapeEditSession | null>(null);
+  const nudgeSessionRef = useRef<NudgeSession | null>(null);
   const finishTextEditRef = useRef<() => boolean>(() => true);
   const compositionActiveRef = useRef(false);
   const finishAfterCompositionRef = useRef(false);
@@ -281,9 +295,64 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     return true;
   };
 
+  const finishNudge = () => {
+    const session = nudgeSessionRef.current;
+    nudgeSessionRef.current = null;
+    if (!session) return;
+    const next = nudgeOverlayLayer(session.baseSnapshot, session.id, session.input.x, session.input.y);
+    if (next === session.baseSnapshot) return;
+    snapshotRef.current = next;
+    if (session.role === 'text') propsRef.current.onTextCommitted(next);
+    else propsRef.current.onShapeCommitted(next);
+    canvasRef.current?.requestRenderAll();
+  };
+
   const finishEditorEdit = () => {
+    finishNudge();
     if (!finishTextEdit()) return false;
     return finishShapePropertiesEdit();
+  };
+
+  const nudgeSelected = (key: NudgeKey, step: number): boolean => {
+    if (documentActionsDisabledRef.current || cropRef.current || panModeRef.current || spacePanRef.current
+      || (step !== 1 && step !== 10)) return false;
+    const id = selectedTextIdRef.current ?? selectedShapeIdRef.current;
+    if (!id) return false;
+    let session = nudgeSessionRef.current;
+    if (session && session.id !== id) {
+      finishNudge();
+      session = null;
+    }
+    if (!session) {
+      if (!finishEditorEdit()) return false;
+      const baseSnapshot = snapshotRef.current;
+      const overlay = baseSnapshot.scene.find(
+        (item): item is TextOverlaySnapshot | ShapeOverlaySnapshot => item.id === id && item.role !== 'source-image',
+      );
+      if (!overlay) return false;
+      const object = overlay.role === 'text' ? textObjectsRef.current.get(id) : shapeObjectsRef.current.get(id);
+      if (!object) return false;
+      session = { id, role: overlay.role, object, baseSnapshot, input: createNudgeInput() };
+      nudgeSessionRef.current = session;
+    }
+    if (!session) return false;
+    const { x, y } = pressNudgeKey(session.input, key, step);
+    session.object.set({ left: (session.object.left ?? 0) + x, top: (session.object.top ?? 0) + y });
+    session.object.setCoords();
+    if (session.role === 'text') {
+      const object = session.object as Textbox;
+      propsRef.current.onTextSelected(session.id, normalizeTextContent(object.text), false, textPropertiesFromObject(object));
+    } else {
+      const overlay = session.baseSnapshot.scene.find((item): item is ShapeOverlaySnapshot => item.role === 'shape' && item.id === session.id);
+      if (overlay) propsRef.current.onShapeSelected({ id: session.id, shape: overlay.shape, properties: shapePropertiesFromObject(session.object) });
+    }
+    canvasRef.current?.requestRenderAll();
+    return true;
+  };
+
+  const releaseNudgeKey = (key: NudgeKey) => {
+    const session = nudgeSessionRef.current;
+    if (session && releaseTrackedNudgeKey(session.input, key)) finishNudge();
   };
 
   const cancelShapePropertiesEdit = () => {
@@ -530,11 +599,20 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     canvasRef.current?.requestRenderAll();
   };
 
-  const deleteOverlay = (id: string) => {
+  const moveOverlay = (id: string, direction: 'up' | 'down') => {
     if (documentActionsDisabledRef.current || cropRef.current || panModeRef.current || spacePanRef.current || !finishEditorEdit()) return;
+    const next = reorderOverlayLayer(snapshotRef.current, id, direction);
+    if (next === snapshotRef.current) return;
+    snapshotRef.current = next;
+    propsRef.current.onLayerCommitted(next);
+    canvasRef.current?.requestRenderAll();
+  };
+
+  const deleteOverlay = (id: string): boolean => {
+    if (documentActionsDisabledRef.current || cropRef.current || panModeRef.current || spacePanRef.current || !finishEditorEdit()) return false;
     const current = snapshotRef.current;
     const next = deleteOverlayLayer(current, id);
-    if (next === current) return;
+    if (next === current) return false;
     snapshotRef.current = next;
     if (selectedTextIdRef.current === id || selectedShapeIdRef.current === id) {
       canvasRef.current?.discardActiveObject();
@@ -543,6 +621,12 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     }
     propsRef.current.onLayerCommitted(next);
     canvasRef.current?.requestRenderAll();
+    return true;
+  };
+
+  const deleteSelectedOverlay = () => {
+    const id = selectedTextIdRef.current ?? selectedShapeIdRef.current;
+    return id ? deleteOverlay(id) : false;
   };
 
   useImperativeHandle(ref, () => ({
@@ -562,7 +646,12 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     finishEditorEdit,
     selectOverlay,
     setOverlayVisibility,
+    moveOverlay,
     deleteOverlay,
+    deleteSelectedOverlay,
+    nudgeSelected,
+    releaseNudgeKey,
+    finishNudge,
   }));
 
   const detachImage = (target: FabricImage) => {
@@ -1058,17 +1147,6 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
   };
 
   const handleStageKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.key === 'Delete' && !event.nativeEvent.isComposing) {
-      const target = event.target;
-      const isTextInput = target instanceof HTMLElement
-        && (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName));
-      const active = canvasRef.current?.getActiveObject();
-      if (!isTextInput && active instanceof Textbox && !active.isEditing) {
-        event.preventDefault();
-        deleteSelectedText();
-        return;
-      }
-    }
     if (event.code !== 'Space') return;
     event.preventDefault();
     if (event.repeat) return;
