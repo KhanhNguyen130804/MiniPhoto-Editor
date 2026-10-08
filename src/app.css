@@ -1981,11 +1981,18 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 12px;
   padding: 0 18px;
   border-top: 1px solid #374151;
   background: #151d2b;
   color: var(--editor-muted);
   font-size: 10px;
+}
+
+.editor-statusbar__save {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .editor-statusbar a {

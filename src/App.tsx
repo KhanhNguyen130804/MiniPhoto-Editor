@@ -33,6 +33,8 @@ import {
 import { calculateResize, type ResizeAxis, type ResizeDimensions, type ResizeError } from './features/editor/engine/resize';
 import { exportImage, type ExportFormat } from './features/editor/engine/exportImage';
 import { selectImagePreset, type ImageAdjustments } from './features/editor/engine/adjustmentFilters';
+import { createDraftAutosave, type DraftAutosaveController, type DraftSaveStatus } from './features/editor/engine/draftAutosave';
+import { saveCurrentDraft } from './features/editor/engine/draftStore';
 import {
   createCropRect,
   CROP_RATIOS,
@@ -49,6 +51,7 @@ type TextNumericField = 'x' | 'y' | 'angle' | 'width' | 'fontSize';
 type ShapeNumericField = 'strokeWidth';
 type PendingCrop = { ratio: CropRatio; rect: CropRect };
 type CropFields = Record<keyof CropRect, string>;
+type DraftSaveRequest = { candidate: ImageImportCandidate; snapshot: EditorSnapshot; revision: number };
 type PendingResize = {
   base: ResizeDimensions;
   fields: Record<ResizeAxis, string>;
@@ -174,7 +177,7 @@ function HelpDialogTrigger({ dark = false }: { dark?: boolean }) {
         <p className="eyebrow">MINIPHOTO EDITOR</p>
         <h2 id="help-dialog-title">Bắt đầu thật đơn giản</h2>
         <p id="help-dialog-copy">
-          Bạn có thể mở ảnh JPG, PNG hoặc WebP tĩnh, cắt, đổi kích thước, xoay/lật, chọn bộ lọc, tinh chỉnh màu, thêm chú thích tiếng Việt, tạo hình khối và tải ảnh xuống. Lưu bản nháp sẽ được bổ sung sau.
+          Bạn có thể mở ảnh JPG, PNG hoặc WebP tĩnh, cắt, đổi kích thước, xoay/lật, chọn bộ lọc, tinh chỉnh màu, thêm chú thích tiếng Việt, tạo hình khối và tải ảnh xuống. Bản nháp tự động lưu trên thiết bị; khôi phục sau khi tải lại sẽ được bổ sung sau.
         </p>
         <div className="dialog-note">
           <strong>Cần trợ giúp ngay?</strong>
@@ -295,7 +298,7 @@ function HomePage({
               <li><span aria-hidden="true">✓</span> Xoay &amp; lật</li>
               <li><span aria-hidden="true">✓</span> Bộ lọc, chữ &amp; hình khối</li>
             </ul>
-            <p className="build-note">Ảnh được đọc trong trình duyệt. Có thể cắt, đổi kích thước, chỉnh màu, áp bộ lọc, thêm chữ, tạo hình khối và tải ảnh; lưu bản nháp sẽ được bổ sung sau.</p>
+            <p className="build-note">Ảnh được đọc trong trình duyệt. Bản nháp tự động lưu trên thiết bị trong khi chỉnh sửa; luồng khôi phục sau khi tải lại sẽ được bổ sung sau.</p>
           </div>
 
           <section className={`import-card${state === 'error' || status.phase === 'error' ? ' import-card--error' : ''}`} aria-labelledby="import-title">
@@ -376,6 +379,7 @@ function EditorPage({
   onChoose,
   replaceButtonRef,
   detachImageRef,
+  draftSaveStatus,
 }: {
   candidate: ImageImportCandidate;
   snapshot: EditorSnapshot;
@@ -394,6 +398,7 @@ function EditorPage({
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
+  draftSaveStatus: DraftSaveStatus;
 }) {
   const tools = ['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'];
   const canvasActionsRef = useRef<EditorCanvasHandle>(null);
@@ -1670,6 +1675,13 @@ function EditorPage({
 
       <footer className="editor-statusbar">
         <span>{snapshot.document.width} × {snapshot.document.height} px</span>
+        <span className="editor-statusbar__save" role="status" aria-live="polite" aria-atomic="true">
+          {draftSaveStatus === 'NOT_SAVED' ? 'Chưa lưu'
+            : draftSaveStatus === 'DIRTY' ? 'Có thay đổi chưa lưu'
+                : draftSaveStatus === 'SAVING' ? 'Đang lưu…'
+                  : draftSaveStatus === 'SAVED' ? 'Đã lưu trên thiết bị'
+                  : 'Chưa lưu được bản nháp'}
+        </span>
         <a href="/privacy">Quyền riêng tư</a>
       </footer>
 
@@ -1794,11 +1806,11 @@ function PrivacyPage() {
 
         <section className="content-card" aria-labelledby="privacy-now-title">
           <h2 id="privacy-now-title">Hiện trạng bản dựng</h2>
-          <p>Ảnh được đọc, giải mã và xuất ngay trong trình duyệt trên thiết bị; bản dựng không tải ảnh lên máy chủ và chưa lưu bản nháp. Khi tải lại hoặc đóng trang, ảnh đang mở sẽ không được giữ lại.</p>
+          <p>Ảnh được đọc, giải mã và xuất ngay trong trình duyệt trên thiết bị; bản dựng không tải ảnh hay bản nháp lên máy chủ. Ứng dụng tự động lưu source ảnh, snapshot chỉnh sửa và thumbnail trong IndexedDB của trình duyệt này. Giao diện khôi phục bản nháp sau khi tải lại chưa được triển khai.</p>
         </section>
         <section className="content-card" aria-labelledby="privacy-later-title">
-          <h2 id="privacy-later-title">Các tính năng chưa có</h2>
-          <p>Lưu bản nháp chưa được triển khai. File chỉ được tạo khi bạn chủ động xuất; có thể xóa file đã tải xuống bằng công cụ quản lý tệp của thiết bị.</p>
+          <h2 id="privacy-later-title">Giới hạn bản nháp</h2>
+          <p>Mỗi origin chỉ giữ một bản nháp trong bộ nhớ trình duyệt trên thiết bị này; dữ liệu không đồng bộ. Quota, chế độ riêng tư hoặc việc xóa dữ liệu trang có thể làm lưu thất bại hay mất dữ liệu. Hãy kiểm tra trạng thái lưu trước khi rời trang; file tải xuống chỉ được tạo khi bạn chủ động xuất.</p>
         </section>
         <a className="button button-secondary" href="/">Quay lại trang chủ</a>
       </main>
@@ -1824,6 +1836,7 @@ export default function App() {
   const [editorHistory, setEditorHistory] = useState<HistoryState<EditorSnapshot> | null>(null);
   const [pendingCandidate, setPendingCandidate] = useState<ImageImportCandidate | null>(null);
   const [importStatus, setImportStatus] = useState<ImportStatus>(idleImportStatus);
+  const [draftSaveStatus, setDraftSaveStatus] = useState<DraftSaveStatus>('NOT_SAVED');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const editorReplaceButtonRef = useRef<HTMLButtonElement>(null);
@@ -1833,6 +1846,7 @@ export default function App() {
   const importGenerationRef = useRef(0);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const detachImageRef = useRef<((image: FabricImage) => void) | null>(null);
+  const draftAutosaveRef = useRef<DraftAutosaveController<DraftSaveRequest> | null>(null);
   const routeRef = useRef(route);
   routeRef.current = route;
   const editorSnapshot = useMemo(
@@ -1890,6 +1904,8 @@ export default function App() {
   };
 
   const activateCandidate = (next: ImageImportCandidate) => {
+    draftAutosaveRef.current?.cancel();
+    setDraftSaveStatus('DIRTY');
     const nextHistory = createHistory(createImageBaselineSnapshot(next.assetId, next.width, next.height));
     const previous = activeCandidateRef.current;
     if (previous && previous !== next) {
@@ -1918,8 +1934,9 @@ export default function App() {
     let decoded: ImageImportCandidate | undefined;
 
     try {
-      await validateImageFile(file, controller.signal);
+      const metadata = await validateImageFile(file, controller.signal);
       decoded = await decodeWithFabricUrl(file, controller.signal);
+      decoded.mimeType = metadata.mimeType;
       if (generation !== importGenerationRef.current || controller.signal.aborted) {
         decoded.dispose();
         return;
@@ -1968,6 +1985,32 @@ export default function App() {
     if (dialogRef.current?.open) dialogRef.current.close();
     focusAfterDialog();
   };
+
+  useEffect(() => {
+    const autosave = createDraftAutosave<DraftSaveRequest>(
+      ({ candidate: currentCandidate, snapshot, revision }) => saveCurrentDraft(currentCandidate, snapshot, revision),
+      setDraftSaveStatus,
+    );
+    draftAutosaveRef.current = autosave;
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') void autosave.flush();
+    };
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    return () => {
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+      autosave.dispose();
+      if (draftAutosaveRef.current === autosave) draftAutosaveRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!candidate || !editorSnapshot || !editorHistory) {
+      draftAutosaveRef.current?.cancel();
+      setDraftSaveStatus('NOT_SAVED');
+      return;
+    }
+    draftAutosaveRef.current?.schedule({ candidate, snapshot: editorSnapshot, revision: editorHistory.revision });
+  }, [candidate, editorHistory, editorSnapshot]);
 
   useEffect(() => {
     if (route === 'editor' && !candidate) {
@@ -2064,6 +2107,7 @@ export default function App() {
           candidate={candidate}
           snapshot={editorSnapshot}
           status={importStatus}
+          draftSaveStatus={draftSaveStatus}
           undoEnabled={editorHistory ? canUndo(editorHistory) : false}
           redoEnabled={editorHistory ? canRedo(editorHistory) : false}
           onUndo={() => setEditorHistory((current) => current ? undoHistory(current) : current)}

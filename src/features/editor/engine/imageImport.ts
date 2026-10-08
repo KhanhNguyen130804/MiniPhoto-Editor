@@ -202,6 +202,8 @@ export async function validateImageFile(file: File, signal?: AbortSignal): Promi
 export type ImageImportCandidate = {
   assetId: string;
   source: File;
+  mimeType?: ImageFileMetadata['mimeType'];
+  importedAt?: number;
   image: FabricImage;
   sourceElement: ImageSource;
   width: number;
@@ -223,6 +225,7 @@ function candidate(source: File, image: FabricImage, release = () => {}): ImageI
   return {
     assetId: crypto.randomUUID(),
     source,
+    importedAt: Date.now(),
     image,
     sourceElement,
     width,

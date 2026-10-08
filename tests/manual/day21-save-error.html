@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Day 21 — lỗi lưu trong editor</title>
+    <link rel="stylesheet" href="/src/app.css" />
+    <style>
+      .day21-harness { padding: 12px 20px; background: #fff7d6; color: #252014; }
+      .day21-harness h1 { margin: 0 0 4px; font-size: 18px; }
+      .day21-harness p { margin: 4px 0; }
+      .day21-harness button { margin: 4px 8px 4px 0; }
+      .day21-harness output { display: block; }
+    </style>
+  </head>
+  <body>
+    <aside class="day21-harness" aria-label="Điều khiển harness Day 21">
+      <h1>Day 21 — kiểm lỗi lưu trong MiniPhoto</h1>
+      <p>Chỉ chạy ở <code>http://127.0.0.1:5175</code>. Mở một ảnh và chờ lưu xong trước khi kiểm lỗi.</p>
+      <button id="arm-save-error" type="button">Ép abort lần lưu kế tiếp</button>
+      <button id="read-stored-draft" type="button">Đọc draft đã lưu</button>
+      <button id="read-save-status-history" type="button">Đọc lịch sử statusbar</button>
+      <output id="harness-result" role="status" aria-live="polite">Chưa chạy kiểm tra.</output>
+      <ol>
+        <li>Lưu ảnh A, ép abort, rồi thay bằng ảnh B và xác nhận thay ảnh.</li>
+        <li>Editor phải hiện “Chưa lưu được bản nháp”; đọc draft vẫn phải cho thấy ảnh A.</li>
+        <li>Mở Xuất ảnh và tạo PNG; thông báo SAVE_ERROR vẫn giữ nguyên.</li>
+        <li>Xoay ảnh B; trạng thái phải đi DIRTY → SAVING → SAVED và draft hiện ảnh B. Đọc lịch sử statusbar để xác nhận cả trạng thái SAVING ngắn.</li>
+      </ol>
+    </aside>
+    <div id="root"></div>
+    <script type="module" src="./day21-save-error.ts"></script>
+  </body>
+</html>
