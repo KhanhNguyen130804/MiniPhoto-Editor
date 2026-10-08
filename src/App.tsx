@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import type { FabricImage } from 'fabric';
 import EditorCanvas from './features/editor/EditorCanvas';
+import PresetControls from './features/editor/PresetControls';
 import {
   canRedo,
   canUndo,
@@ -19,7 +20,7 @@ import {
   validateImageFile,
   type ImageImportCandidate,
 } from './features/editor/engine/imageImport';
-import { createImageBaselineSnapshot, type EditorSnapshot } from './features/editor/engine/snapshot';
+import { createImageBaselineSnapshot, type EditorSnapshot, type PresetId } from './features/editor/engine/snapshot';
 import {
   cropDocument as cropEditorDocument,
   resizeDocument as resizeEditorDocument,
@@ -28,7 +29,7 @@ import {
 } from './features/editor/engine/geometry';
 import { calculateResize, type ResizeAxis, type ResizeDimensions, type ResizeError } from './features/editor/engine/resize';
 import { exportImage, type ExportFormat } from './features/editor/engine/exportImage';
-import type { ImageAdjustments } from './features/editor/engine/adjustmentFilters';
+import { selectImagePreset, type ImageAdjustments } from './features/editor/engine/adjustmentFilters';
 import {
   createCropRect,
   CROP_RATIOS,
@@ -400,6 +401,7 @@ function EditorPage({
   const [cropError, setCropError] = useState('');
   const [resizePending, setResizePending] = useState<PendingResize | null>(null);
   const [adjustmentOpen, setAdjustmentOpen] = useState(false);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [adjustmentPreview, setAdjustmentPreview] = useState<ImageAdjustments | null>(null);
   const [adjustmentOperationActive, setAdjustmentOperationActive] = useState(false);
   const [adjustmentInputs, setAdjustmentInputs] = useState<Partial<Record<AdjustmentField, string>>>({});
@@ -493,6 +495,7 @@ function EditorPage({
   const startCrop = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     setAdjustmentOpen(false);
+    setFilterOpen(false);
     setPanelOpen(true);
     const rect = createCropRect(snapshot.document, 'free');
     if (!rect) return;
@@ -510,6 +513,7 @@ function EditorPage({
   const startResize = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     setAdjustmentOpen(false);
+    setFilterOpen(false);
     const base = { width: snapshot.document.width, height: snapshot.document.height };
     setResizePending({
       base,
@@ -694,11 +698,32 @@ function EditorPage({
       setAdjustmentOpen(false);
       setPanelOpen(false);
     } else {
+      setFilterOpen(false);
       setAdjustmentOpen(true);
       setPanelOpen(true);
     }
   };
-  const activeTool = cropPending ? 'Cắt' : resizePending ? 'Kích thước' : adjustmentOpen ? 'Điều chỉnh' : null;
+  const toggleFilters = () => {
+    if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
+    if (filterOpen) {
+      setFilterOpen(false);
+      setPanelOpen(false);
+    } else {
+      finishAdjustmentOperation();
+      setAdjustmentOpen(false);
+      setFilterOpen(true);
+      setPanelOpen(true);
+    }
+  };
+  const choosePreset = (presetId: PresetId) => {
+    const base = latestSnapshotRef.current;
+    const next = selectImagePreset(base, presetId);
+    if (next === base) return;
+    latestSnapshotRef.current = next;
+    onApplyAdjustments(next);
+  };
+  const activeTool = cropPending ? 'Cắt' : resizePending ? 'Kích thước'
+    : filterOpen ? 'Bộ lọc' : adjustmentOpen ? 'Điều chỉnh' : null;
   const documentActionLocked = exportBusy || Boolean(cropPending || resizePending || adjustmentOperationActive);
   const displayedAdjustments = adjustmentPreview ?? snapshotAdjustments(snapshot);
   const previewCanvasSnapshot = previewSnapshot;
@@ -749,13 +774,14 @@ function EditorPage({
               className={`tool-item${activeTool === tool ? ' tool-item--active' : ''}`}
               type="button"
               key={tool}
-              disabled={(!['Cắt', 'Kích thước', 'Điều chỉnh'].includes(tool)) || exportBusy || status.phase === 'loading'
+              disabled={(!['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc'].includes(tool)) || exportBusy || status.phase === 'loading'
                 || Boolean((cropPending || resizePending) && activeTool !== tool)}
-              aria-pressed={['Cắt', 'Kích thước', 'Điều chỉnh'].includes(tool) ? activeTool === tool : undefined}
+              aria-pressed={['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc'].includes(tool) ? activeTool === tool : undefined}
               onClick={tool === 'Cắt'
                 ? (cropPending ? cancelCrop : startCrop)
                 : tool === 'Kích thước' ? (resizePending ? cancelResize : startResize)
-                  : tool === 'Điều chỉnh' ? toggleAdjustments : undefined}
+                  : tool === 'Điều chỉnh' ? toggleAdjustments
+                    : tool === 'Bộ lọc' ? toggleFilters : undefined}
             >
               <span className="tool-item__icon" aria-hidden="true">{['⌗', '↔', '◐', '✧', 'T', '◇'][index]}</span>
               <span>{tool}</span>
@@ -877,6 +903,13 @@ function EditorPage({
                 <button className="button button-secondary" type="button" onClick={cancelResize}>Hủy resize</button>
               </div>
             </section>
+          ) : filterOpen ? (
+            <PresetControls
+              candidate={candidate}
+              snapshot={snapshot}
+              disabled={exportBusy || status.phase === 'loading'}
+              onSelect={choosePreset}
+            />
           ) : adjustmentOpen ? (
             <section className="adjustment-controls" aria-labelledby="adjustment-controls-title">
               <div className="adjustment-controls__intro">
@@ -954,7 +987,7 @@ function EditorPage({
             <div className="properties-empty">
               <span className="properties-empty__icon" aria-hidden="true">◇</span>
               <strong>Công cụ chưa khả dụng</strong>
-              <p>Chọn Cắt, Kích thước hoặc Điều chỉnh để thao tác với ảnh.</p>
+              <p>Chọn Cắt, Kích thước, Điều chỉnh hoặc Bộ lọc để thao tác với ảnh.</p>
             </div>
           )}
           <div className="properties-note">
@@ -962,7 +995,7 @@ function EditorPage({
             <p>{cropPending
               ? 'Khung cắt chỉ tồn tại trong phiên đang mở và không làm thay đổi lịch sử.'
               : resizePending ? 'Áp dụng sẽ scale toàn bộ nội dung và có thể hoàn tác bằng Undo.'
-                : adjustmentOpen ? 'Điều chỉnh chỉ tác động ảnh nền; hình học và lớp phủ được giữ nguyên.'
+                : adjustmentOpen || filterOpen ? 'Màu chỉ tác động ảnh nền; hình học và lớp phủ được giữ nguyên.'
                   : 'Các thay đổi được lưu trong lịch sử của phiên chỉnh sửa.'}</p>
           </div>
         </aside>

@@ -1452,6 +1452,107 @@ button:disabled {
   padding-inline: 11px;
 }
 
+.filter-controls {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px 0;
+}
+
+.filter-controls__intro strong {
+  color: #e2e8f0;
+  font-size: 12px;
+}
+
+.filter-controls__intro p {
+  margin: 5px 0 0;
+  color: var(--editor-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.preset-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.preset-card {
+  display: flex;
+  min-width: 0;
+  min-height: 96px;
+  flex-direction: column;
+  gap: 6px;
+  padding: 6px;
+  border: 1px solid #374151;
+  border-radius: 8px;
+  background: #1b2636;
+  color: #cbd5e1;
+  text-align: left;
+  cursor: pointer;
+}
+
+.preset-card:hover:not(:disabled) {
+  border-color: #64748b;
+  background: #263246;
+}
+
+.preset-card:focus-visible {
+  outline: 2px solid #60a5fa;
+  outline-offset: 2px;
+}
+
+.preset-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.preset-card--selected,
+.preset-card--selected:hover:not(:disabled) {
+  border-color: #60a5fa;
+  background: #1e3a5f;
+  color: #f8fafc;
+  box-shadow: 0 0 0 1px rgb(96 165 250 / 28%);
+}
+
+.preset-card__thumbnail {
+  display: block;
+  width: 100%;
+  height: 62px;
+  border-radius: 5px;
+  background-color: #111827;
+  background-image:
+    linear-gradient(45deg, #263246 25%, transparent 25%),
+    linear-gradient(-45deg, #263246 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #263246 75%),
+    linear-gradient(-45deg, transparent 75%, #263246 75%);
+  background-position: 0 0, 0 4px, 4px -4px, -4px 0;
+  background-size: 8px 8px;
+  object-fit: contain;
+}
+
+.preset-card__thumbnail--empty {
+  border: 1px solid #263246;
+}
+
+.preset-card__label {
+  overflow: hidden;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-controls__error {
+  margin: 0;
+  color: #fca5a5;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 .properties-note {
   display: flex;
   align-items: flex-start;
@@ -1641,6 +1742,12 @@ button:disabled {
   }
 
   .adjustment-controls {
+    min-width: 0;
+    flex: 1;
+    padding: 0;
+  }
+
+  .filter-controls {
     min-width: 0;
     flex: 1;
     padding: 0;

@@ -69,6 +69,16 @@ export type ShapeOverlaySnapshot = OverlayTransformSnapshot & (
 
 export type SceneObjectSnapshot = SourceImageSnapshot | TextOverlaySnapshot | ShapeOverlaySnapshot;
 
+export type PresetId = 'original' | 'warm' | 'cool' | 'vintage' | 'bw' | 'fade' | 'vivid' | 'film' | 'sepia' | 'dramatic';
+
+export type ImageAppearanceSnapshot = {
+  readonly presetId: PresetId;
+  readonly presetVersion: number;
+  readonly brightness: number;
+  readonly contrast: number;
+  readonly saturation: number;
+};
+
 export type EditorSnapshot = {
   readonly schemaVersion: 1;
   readonly document: {
@@ -78,13 +88,7 @@ export type EditorSnapshot = {
   };
   /** Maps baseline scene coordinates into the current document coordinates. */
   readonly documentTransform: TMat2D;
-  readonly imageAppearance: {
-    readonly presetId: string;
-    readonly presetVersion: number;
-    readonly brightness: number;
-    readonly contrast: number;
-    readonly saturation: number;
-  };
+  readonly imageAppearance: ImageAppearanceSnapshot;
   readonly scene: readonly SceneObjectSnapshot[];
 };
 
