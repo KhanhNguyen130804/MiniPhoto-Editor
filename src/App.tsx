@@ -20,7 +20,12 @@ import {
   type ImageImportCandidate,
 } from './features/editor/engine/imageImport';
 import { createImageBaselineSnapshot, type EditorSnapshot } from './features/editor/engine/snapshot';
-import { cropDocument as cropEditorDocument, transformDocument as transformEditorDocument, type GeometryCommand } from './features/editor/engine/geometry';
+import {
+  cropDocument as cropEditorDocument,
+  resizeDocument as resizeEditorDocument,
+  transformDocument as transformEditorDocument,
+  type GeometryCommand,
+} from './features/editor/engine/geometry';
 import { calculateResize, type ResizeAxis, type ResizeDimensions, type ResizeError } from './features/editor/engine/resize';
 import { exportImage, type ExportFormat } from './features/editor/engine/exportImage';
 import {
@@ -43,7 +48,7 @@ type PendingResize = {
   dimensions: ResizeDimensions;
   scale: number;
   error: { field: ResizeAxis; code: ResizeError } | null;
-  prepared: ResizeDimensions | null;
+  applyError: string | null;
 };
 
 const idleImportStatus: ImportStatus = { phase: 'idle' };
@@ -338,6 +343,7 @@ function EditorPage({
   onRedo,
   onTransform,
   onApplyCrop,
+  onApplyResize,
   onChoose,
   replaceButtonRef,
   detachImageRef,
@@ -351,6 +357,7 @@ function EditorPage({
   onRedo: () => void;
   onTransform: (command: GeometryCommand) => void;
   onApplyCrop: (snapshot: EditorSnapshot) => void;
+  onApplyResize: (snapshot: EditorSnapshot) => void;
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
@@ -397,7 +404,7 @@ function EditorPage({
       dimensions: base,
       scale: 1,
       error: null,
-      prepared: null,
+      applyError: null,
     });
     setPanelOpen(true);
   };
@@ -412,7 +419,7 @@ function EditorPage({
         ...resizePending,
         fields: { ...resizePending.fields, [field]: value },
         error: { field, code: result.error },
-        prepared: null,
+        applyError: null,
       });
       return;
     }
@@ -425,13 +432,21 @@ function EditorPage({
       dimensions: result.dimensions,
       scale: result.scale,
       error: null,
-      prepared: null,
+      applyError: null,
     });
   };
 
   const applyResize = () => {
     if (!resizePending || resizePending.error) return;
-    setResizePending({ ...resizePending, prepared: resizePending.dimensions });
+    try {
+      onApplyResize(resizeEditorDocument(snapshot, resizePending.dimensions, resizePending.scale));
+      setResizePending(null);
+    } catch {
+      setResizePending({
+        ...resizePending,
+        applyError: 'Không thể áp dụng kích thước này. Hãy kiểm tra lại các giá trị.',
+      });
+    }
   };
 
   const chooseCropRatio = (ratio: CropRatio) => {
@@ -725,13 +740,8 @@ function EditorPage({
               {!resizePending.error && resizePending.scale > 1 && (
                 <p className="resize-upscale-warning" role="status">Phóng lớn không tạo thêm chi tiết ảnh.</p>
               )}
-              {resizePending.prepared && (
-                <p className="resize-prepared" role="status" aria-live="polite">
-                  {resizePending.prepared.width === resizePending.base.width
-                    && resizePending.prepared.height === resizePending.base.height
-                    ? 'Kích thước không đổi; tài liệu và lịch sử được giữ nguyên.'
-                    : `Đã chuẩn bị ${resizePending.prepared.width} × ${resizePending.prepared.height} px. Canvas, tài liệu và lịch sử chưa thay đổi; áp dụng resize sẽ nối ở Day 12.`}
-                </p>
+              {resizePending.applyError && (
+                <p className="crop-validation-error" role="alert">{resizePending.applyError}</p>
               )}
               <div className="crop-actions">
                 <button className="button button-primary" type="button" onClick={applyResize} disabled={Boolean(resizePending.error)}>
@@ -751,7 +761,7 @@ function EditorPage({
             <span className="properties-note__dot" aria-hidden="true" />
             <p>{cropPending
               ? 'Khung cắt chỉ tồn tại trong phiên đang mở và không làm thay đổi lịch sử.'
-              : resizePending ? 'Kích thước chỉ được ghi nhận tạm; tài liệu và lịch sử chưa đổi.'
+              : resizePending ? 'Áp dụng sẽ scale toàn bộ nội dung và có thể hoàn tác bằng Undo.'
                 : 'Ảnh gốc và các bước chỉnh sửa sẽ được quản lý riêng biệt.'}</p>
           </div>
         </aside>
@@ -937,6 +947,10 @@ export default function App() {
   };
 
   const applyCrop = (snapshot: EditorSnapshot) => {
+    setEditorHistory((current) => current ? commitHistory(current, snapshot) : current);
+  };
+
+  const applyResize = (snapshot: EditorSnapshot) => {
     setEditorHistory((current) => current ? commitHistory(current, snapshot) : current);
   };
 
@@ -1146,6 +1160,7 @@ export default function App() {
           onRedo={() => setEditorHistory((current) => current ? redoHistory(current) : current)}
           onTransform={transformDocument}
           onApplyCrop={applyCrop}
+          onApplyResize={applyResize}
           onChoose={openFilePicker}
           replaceButtonRef={editorReplaceButtonRef}
           detachImageRef={detachImageRef}

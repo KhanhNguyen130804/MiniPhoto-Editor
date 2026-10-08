@@ -1,5 +1,7 @@
 import { util, type FabricObject, type TMat2D } from 'fabric';
 import { validateCropRect, type CropRatio, type CropRect } from './crop';
+import { MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS } from './imageImport';
+import type { ResizeDimensions } from './resize';
 import type { EditorSnapshot } from './snapshot';
 
 export type GeometryCommand = 'rotate-left' | 'rotate-right' | 'flip-horizontal' | 'flip-vertical';
@@ -15,6 +17,37 @@ export function cropDocument(snapshot: EditorSnapshot, rect: CropRect, ratio: Cr
     document: { ...snapshot.document, width: rect.width, height: rect.height },
     documentTransform: util.multiplyTransformMatrices(
       [1, 0, 0, 1, -rect.x, -rect.y],
+      snapshot.documentTransform,
+    ),
+  };
+}
+
+function validResizeDimensions({ width, height }: ResizeDimensions): boolean {
+  return Number.isSafeInteger(width) && Number.isSafeInteger(height)
+    && width >= 1 && height >= 1
+    && width <= MAX_IMAGE_EDGE && height <= MAX_IMAGE_EDGE
+    && width * height <= MAX_IMAGE_PIXELS;
+}
+
+export function resizeDocument(
+  snapshot: EditorSnapshot,
+  dimensions: ResizeDimensions,
+  scale: number,
+): EditorSnapshot {
+  const current = snapshot.document;
+  if (!validResizeDimensions(current) || !validResizeDimensions(dimensions)
+    || !Number.isFinite(scale) || scale <= 0
+    || Math.round(current.width * scale) !== dimensions.width
+    || Math.round(current.height * scale) !== dimensions.height) {
+    throw new RangeError('Invalid resize dimensions or scale.');
+  }
+  if (scale === 1 && dimensions.width === current.width && dimensions.height === current.height) return snapshot;
+
+  return {
+    ...snapshot,
+    document: { ...snapshot.document, ...dimensions },
+    documentTransform: util.multiplyTransformMatrices(
+      [scale, 0, 0, scale, 0, 0],
       snapshot.documentTransform,
     ),
   };

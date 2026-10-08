@@ -1355,14 +1355,6 @@ button:disabled {
   color: #fcd34d;
 }
 
-.crop-controls .resize-prepared {
-  padding: 9px 10px;
-  border: 1px solid #36506f;
-  border-radius: 8px;
-  background: #1e3148;
-  color: #bfdbfe;
-}
-
 .crop-actions {
   display: flex;
   flex-wrap: wrap;
