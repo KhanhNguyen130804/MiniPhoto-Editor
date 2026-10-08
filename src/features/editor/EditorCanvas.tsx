@@ -1,7 +1,8 @@
-import { Canvas, FabricImage, type TMat2D } from 'fabric';
+import { Canvas, FabricImage, Rect, type FabricObject, type TMat2D } from 'fabric';
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { applyDocumentTransform, type GeometryCommand } from './engine/geometry';
 import type { EditorSnapshot } from './engine/snapshot';
+import { createFabricOverlays } from './engine/scene';
 import { resizeCropRect, type CropHandle, type CropRatio, type CropRect } from './engine/crop';
 
 type Size = { width: number; height: number };
@@ -69,6 +70,8 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
   const imageRef = useRef(image);
   const snapshotRef = useRef(snapshot);
   const attachedImageRef = useRef<FabricImage | null>(null);
+  const attachedOverlaysRef = useRef<FabricObject[]>([]);
+  const documentClipRef = useRef<Rect | null>(null);
   const viewportSizeRef = useRef<Size>({ width: 0, height: 0 });
   const disposeQueueRef = useRef<Promise<void>>(Promise.resolve());
   const panStartRef = useRef<PanStart | null>(null);
@@ -90,20 +93,29 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
     if (canvas && attachedImageRef.current === target) {
       canvas.remove(target);
       attachedImageRef.current = null;
+      canvas.remove(...attachedOverlaysRef.current);
+      attachedOverlaysRef.current = [];
       canvas.requestRenderAll();
     }
   };
 
-  const syncImage = (canvas: Canvas) => {
+  const syncScene = (canvas: Canvas) => {
     const current = attachedImageRef.current;
     const next = imageRef.current;
+    const currentOverlays = attachedOverlaysRef.current;
+    if (currentOverlays.length) canvas.remove(...currentOverlays);
+    attachedOverlaysRef.current = [];
     if (current && current !== next) {
       canvas.remove(current);
       attachedImageRef.current = null;
     }
     if (next) {
-      const source = snapshotRef.current.scene.find((item) => item.role === 'source-image');
-      if (!source) throw new Error('Snapshot is missing its source image.');
+      const snapshot = snapshotRef.current;
+      const sources = snapshot.scene.filter((item) => item.role === 'source-image');
+      const source = sources[0];
+      if (sources.length !== 1 || !source || snapshot.scene[0] !== source) {
+        throw new Error('Snapshot must have one source image at the bottom of its scene.');
+      }
       next.set({
         left: source.left,
         top: source.top,
@@ -132,6 +144,26 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
       attachedImageRef.current = next;
       canvas.add(next);
     }
+
+    const snapshot = snapshotRef.current;
+    const overlays = createFabricOverlays(snapshot.scene);
+    overlays.forEach((object) => applyDocumentTransform(object, snapshot.documentTransform));
+    if (overlays.length) canvas.add(...overlays);
+    attachedOverlaysRef.current = overlays;
+
+    const clip = documentClipRef.current ?? new Rect({
+      left: 0,
+      top: 0,
+      width: snapshot.document.width,
+      height: snapshot.document.height,
+      originX: 'left',
+      originY: 'top',
+      selectable: false,
+      evented: false,
+    });
+    clip.set({ width: snapshot.document.width, height: snapshot.document.height });
+    documentClipRef.current = clip;
+    canvas.clipPath = clip;
     canvas.requestRenderAll();
   };
 
@@ -191,7 +223,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
       canvasRef.current = canvas;
       viewportSizeRef.current = initialSize;
       setViewportSize(initialSize);
-      syncImage(canvas);
+      syncScene(canvas);
 
       const currentDocument = documentSizeRef.current;
       if (validSize(currentDocument)) {
@@ -226,6 +258,10 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
           currentCanvas.remove(attachedImage);
           attachedImageRef.current = null;
         }
+        currentCanvas.remove(...attachedOverlaysRef.current);
+        attachedOverlaysRef.current = [];
+        currentCanvas.clipPath = undefined;
+        documentClipRef.current = null;
         if (canvasRef.current === currentCanvas) canvasRef.current = null;
         disposeQueueRef.current = disposeQueueRef.current.then(async () => {
           await currentCanvas.dispose();
@@ -239,7 +275,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
     const canvas = canvasRef.current;
     if (!canvas) return;
     try {
-      syncImage(canvas);
+      syncScene(canvas);
     } catch {
       setCanvasError(true);
     }

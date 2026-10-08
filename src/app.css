@@ -1349,8 +1349,15 @@ button:disabled {
   color: #fca5a5;
 }
 
-.crop-cancel {
-  align-self: flex-start;
+.crop-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.crop-actions .button {
+  flex: 1 1 120px;
+  justify-content: center;
 }
 
 .properties-note {

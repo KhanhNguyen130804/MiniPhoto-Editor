@@ -36,8 +36,9 @@ function run(): string[] {
   assert(baseline.document.width === 160 && baseline.document.height === 120, 'Baseline dimensions are missing.');
   assert(baseline.imageAppearance.presetId === 'original' && baseline.imageAppearance.brightness === 0,
     'Baseline appearance is not neutral.');
-  assert(baseline.scene.length === 1 && baseline.scene[0].assetId === 'asset-a'
-    && baseline.scene[0].left === 0 && baseline.scene[0].scaleX === 1,
+  const source = baseline.scene[0];
+  assert(baseline.scene.length === 1 && source?.role === 'source-image' && source.assetId === 'asset-a'
+    && source.left === 0 && source.scaleX === 1,
   'Baseline source image transform is incomplete.');
   assert(!('viewport' in baseline) && !('selection' in baseline) && !('source' in baseline),
     'Runtime or source file data leaked into the snapshot.');

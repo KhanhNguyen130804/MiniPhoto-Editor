@@ -46,6 +46,7 @@ export function validateCropRect(
   ratio: CropRatio,
 ): CropValidationError | null {
   if (!validBounds(bounds)) return 'invalid-document';
+  if (!CROP_RATIOS.some((option) => option.id === ratio)) return 'invalid-ratio';
   if (![rect.x, rect.y, rect.width, rect.height].every(Number.isSafeInteger)) return 'invalid-number';
   if (rect.width < 1 || rect.height < 1 || rect.x < 0 || rect.y < 0
     || rect.x + rect.width > bounds.width || rect.y + rect.height > bounds.height) return 'outside-bounds';

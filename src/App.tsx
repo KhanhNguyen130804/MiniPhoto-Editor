@@ -20,7 +20,7 @@ import {
   type ImageImportCandidate,
 } from './features/editor/engine/imageImport';
 import { createImageBaselineSnapshot, type EditorSnapshot } from './features/editor/engine/snapshot';
-import { transformDocument as transformEditorDocument, type GeometryCommand } from './features/editor/engine/geometry';
+import { cropDocument as cropEditorDocument, transformDocument as transformEditorDocument, type GeometryCommand } from './features/editor/engine/geometry';
 import { exportImage, type ExportFormat } from './features/editor/engine/exportImage';
 import {
   createCropRect,
@@ -317,6 +317,7 @@ function EditorPage({
   onUndo,
   onRedo,
   onTransform,
+  onApplyCrop,
   onChoose,
   replaceButtonRef,
   detachImageRef,
@@ -329,6 +330,7 @@ function EditorPage({
   onUndo: () => void;
   onRedo: () => void;
   onTransform: (command: GeometryCommand) => void;
+  onApplyCrop: (snapshot: EditorSnapshot) => void;
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
@@ -401,6 +403,21 @@ function EditorPage({
     setCropPending({ ...cropPending, rect });
     setCropInput(cropFields(rect));
     setCropError('');
+  };
+
+  const applyCrop = () => {
+    if (!cropPending || cropError) return;
+    const validation = validateCropRect(cropPending.rect, snapshot.document, cropPending.ratio);
+    if (validation) {
+      setCropError(cropValidationMessage(validation));
+      return;
+    }
+    try {
+      onApplyCrop(cropEditorDocument(snapshot, cropPending.rect, cropPending.ratio));
+      cancelCrop();
+    } catch {
+      setCropError('Không thể áp dụng khung cắt. Hãy kiểm tra lại các giá trị.');
+    }
   };
 
   useEffect(() => {
@@ -548,7 +565,7 @@ function EditorPage({
             <section className="crop-controls" aria-labelledby="crop-controls-title">
               <div>
                 <strong id="crop-controls-title">Khung cắt đang chờ</strong>
-                <p>Chưa có thay đổi nào áp dụng lên tài liệu. Nhấn Escape hoặc Hủy cắt để bỏ khung này.</p>
+                <p>Nhấn Áp dụng để crop tài liệu, hoặc Escape/Hủy cắt để bỏ khung đang chờ.</p>
               </div>
               <label className="crop-ratio-field">
                 Tỷ lệ
@@ -587,7 +604,12 @@ function EditorPage({
                 ))}
               </div>
               {cropError && <p id="crop-validation-error" className="crop-validation-error" role="alert">{cropError}</p>}
-              <button className="button button-secondary crop-cancel" type="button" onClick={cancelCrop}>Hủy cắt</button>
+              <div className="crop-actions">
+                <button className="button button-primary" type="button" onClick={applyCrop} disabled={Boolean(cropError)}>
+                  Áp dụng
+                </button>
+                <button className="button button-secondary" type="button" onClick={cancelCrop}>Hủy cắt</button>
+              </div>
             </section>
           ) : (
             <div className="properties-empty">
@@ -780,6 +802,10 @@ export default function App() {
     setEditorHistory((current) => current
       ? commitHistory(current, transformEditorDocument(currentSnapshot(current), command))
       : current);
+  };
+
+  const applyCrop = (snapshot: EditorSnapshot) => {
+    setEditorHistory((current) => current ? commitHistory(current, snapshot) : current);
   };
 
   const cancelInFlightImport = () => {
@@ -987,6 +1013,7 @@ export default function App() {
           onUndo={() => setEditorHistory((current) => current ? undoHistory(current) : current)}
           onRedo={() => setEditorHistory((current) => current ? redoHistory(current) : current)}
           onTransform={transformDocument}
+          onApplyCrop={applyCrop}
           onChoose={openFilePicker}
           replaceButtonRef={editorReplaceButtonRef}
           detachImageRef={detachImageRef}

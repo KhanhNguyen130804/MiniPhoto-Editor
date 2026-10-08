@@ -1,7 +1,24 @@
 import { util, type FabricObject, type TMat2D } from 'fabric';
+import { validateCropRect, type CropRatio, type CropRect } from './crop';
 import type { EditorSnapshot } from './snapshot';
 
 export type GeometryCommand = 'rotate-left' | 'rotate-right' | 'flip-horizontal' | 'flip-vertical';
+
+export function cropDocument(snapshot: EditorSnapshot, rect: CropRect, ratio: CropRatio): EditorSnapshot {
+  const validation = validateCropRect(rect, snapshot.document, ratio);
+  if (validation) throw new RangeError(`Invalid crop: ${validation}.`);
+  if (rect.x === 0 && rect.y === 0
+    && rect.width === snapshot.document.width && rect.height === snapshot.document.height) return snapshot;
+
+  return {
+    ...snapshot,
+    document: { ...snapshot.document, width: rect.width, height: rect.height },
+    documentTransform: util.multiplyTransformMatrices(
+      [1, 0, 0, 1, -rect.x, -rect.y],
+      snapshot.documentTransform,
+    ),
+  };
+}
 
 export function transformDocument(snapshot: EditorSnapshot, command: GeometryCommand): EditorSnapshot {
   const { width, height } = snapshot.document;

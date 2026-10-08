@@ -17,6 +17,58 @@ export type SourceImageSnapshot = {
   readonly opacity: number;
 };
 
+type OverlayTransformSnapshot = {
+  readonly id: string;
+  readonly left: number;
+  readonly top: number;
+  readonly scaleX: number;
+  readonly scaleY: number;
+  readonly angle: number;
+  readonly flipX: boolean;
+  readonly flipY: boolean;
+  readonly visible: boolean;
+  readonly opacity: number;
+};
+
+export type TextOverlaySnapshot = OverlayTransformSnapshot & {
+  readonly role: 'text';
+  readonly text: string;
+  readonly width: number;
+  readonly fontFamily: string;
+  readonly fontSize: number;
+  readonly fill: string;
+};
+
+export type ShapeOverlaySnapshot = OverlayTransformSnapshot & (
+  | {
+    readonly role: 'shape';
+    readonly shape: 'rectangle';
+    readonly width: number;
+    readonly height: number;
+    readonly fill: string | null;
+    readonly stroke: string | null;
+    readonly strokeWidth: number;
+  }
+  | {
+    readonly role: 'shape';
+    readonly shape: 'circle';
+    readonly radius: number;
+    readonly fill: string | null;
+    readonly stroke: string | null;
+    readonly strokeWidth: number;
+  }
+  | {
+    readonly role: 'shape';
+    readonly shape: 'line';
+    readonly x2: number;
+    readonly y2: number;
+    readonly stroke: string;
+    readonly strokeWidth: number;
+  }
+);
+
+export type SceneObjectSnapshot = SourceImageSnapshot | TextOverlaySnapshot | ShapeOverlaySnapshot;
+
 export type EditorSnapshot = {
   readonly schemaVersion: 1;
   readonly document: {
@@ -33,7 +85,7 @@ export type EditorSnapshot = {
     readonly contrast: number;
     readonly saturation: number;
   };
-  readonly scene: readonly SourceImageSnapshot[];
+  readonly scene: readonly SceneObjectSnapshot[];
 };
 
 export function createImageBaselineSnapshot(

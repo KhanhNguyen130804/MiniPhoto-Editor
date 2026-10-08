@@ -5,6 +5,7 @@ import {
   type ImageImportCandidate,
 } from './imageImport';
 import { applyDocumentTransform } from './geometry';
+import { createFabricOverlays } from './scene';
 import type { EditorSnapshot } from './snapshot';
 
 export type ExportFormat = 'png' | 'jpeg';
@@ -60,8 +61,11 @@ export async function exportImage(
     throw new TypeError('Màu nền JPG không hợp lệ.');
   }
 
-  const source = snapshot.scene.find((item) => item.role === 'source-image');
-  if (!source || source.assetId !== candidate.assetId) throw new Error('Snapshot không có ảnh nguồn hợp lệ.');
+  const sources = snapshot.scene.filter((item) => item.role === 'source-image');
+  const source = sources[0];
+  if (sources.length !== 1 || !source || snapshot.scene[0] !== source || source.assetId !== candidate.assetId) {
+    throw new Error('Snapshot không có ảnh nguồn hợp lệ ở lớp nền.');
+  }
 
   const renderer = new StaticCanvas(document.createElement('canvas'), {
     width: snapshot.document.width,
@@ -87,6 +91,10 @@ export async function exportImage(
     });
     applyDocumentTransform(image, snapshot.documentTransform);
     renderer.add(image);
+
+    const overlays = createFabricOverlays(snapshot.scene);
+    overlays.forEach((object) => applyDocumentTransform(object, snapshot.documentTransform));
+    if (overlays.length) renderer.add(...overlays);
     renderer.renderAll();
 
     const blob = await canvasBlob(renderer.lowerCanvasEl, options);
