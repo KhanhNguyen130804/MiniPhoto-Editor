@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent, type RefObject } from 'react';
 import type { FabricImage } from 'fabric';
 import EditorCanvas, { type EditorCanvasHandle } from './features/editor/EditorCanvas';
+import LayersPanel from './features/editor/LayersPanel';
 import PresetControls from './features/editor/PresetControls';
 import {
   canRedo,
@@ -371,6 +372,7 @@ function EditorPage({
   onApplyAdjustments,
   onApplyText,
   onApplyShape,
+  onApplyLayer,
   onChoose,
   replaceButtonRef,
   detachImageRef,
@@ -388,6 +390,7 @@ function EditorPage({
   onApplyAdjustments: (snapshot: EditorSnapshot) => void;
   onApplyText: (snapshot: EditorSnapshot) => void;
   onApplyShape: (snapshot: EditorSnapshot) => void;
+  onApplyLayer: (snapshot: EditorSnapshot) => void;
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
@@ -397,6 +400,7 @@ function EditorPage({
   const finishTextEdit = () => canvasActionsRef.current?.finishEditorEdit() !== false;
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [activePanelTab, setActivePanelTab] = useState<'properties' | 'layers'>('properties');
   const exportDialogRef = useRef<HTMLDialogElement>(null);
   const exportUrlRef = useRef<string | null>(null);
   const exportGenerationRef = useRef(0);
@@ -436,7 +440,7 @@ function EditorPage({
   const latestSnapshotRef = useRef(snapshot);
   latestSnapshotRef.current = snapshot;
 
-  const handleTextSelected = (id: string | null, text = '', isNew = false, properties?: TextProperties, cancelled = false) => {
+  const handleTextSelected = (id: string | null, text = '', isNew = false, properties?: TextProperties, cancelled = false, openProperties = true) => {
     if (cancelled || !id) {
       setTextPropertyInputs({});
       textPropertyErrorRef.current = '';
@@ -458,12 +462,13 @@ function EditorPage({
       }),
     }));
     setTextToolOpen(true);
+    if (openProperties) setActivePanelTab('properties');
     setAdjustmentOpen(false);
     setFilterOpen(false);
     setPanelOpen(true);
   };
 
-  const handleShapeSelected = (shape: SelectedShape | null) => {
+  const handleShapeSelected = (shape: SelectedShape | null, openProperties = true) => {
     if (!shape) {
       setSelectedShape(null);
       setShapePropertyInputs({});
@@ -475,6 +480,7 @@ function EditorPage({
     setSelectedText(null);
     setSelectedShape(shape);
     setShapeToolOpen(true);
+    if (openProperties) setActivePanelTab('properties');
     setTextToolOpen(false);
     setAdjustmentOpen(false);
     setFilterOpen(false);
@@ -648,9 +654,11 @@ function EditorPage({
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     if (!finishTextEdit()) return;
     if (textToolOpen) {
+      setActivePanelTab('properties');
       setTextToolOpen(false);
       setPanelOpen(false);
     } else {
+      setActivePanelTab('properties');
       setAdjustmentOpen(false);
       setFilterOpen(false);
       setShapeToolOpen(false);
@@ -663,9 +671,11 @@ function EditorPage({
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     if (!finishTextEdit()) return;
     if (shapeToolOpen) {
+      setActivePanelTab('properties');
       setShapeToolOpen(false);
       setPanelOpen(false);
     } else {
+      setActivePanelTab('properties');
       setAdjustmentOpen(false);
       setFilterOpen(false);
       setTextToolOpen(false);
@@ -773,6 +783,7 @@ function EditorPage({
   const startCrop = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     if (!finishTextEdit()) return;
+    setActivePanelTab('properties');
     setAdjustmentOpen(false);
     setFilterOpen(false);
     setTextToolOpen(false);
@@ -794,6 +805,7 @@ function EditorPage({
   const startResize = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     if (!finishTextEdit()) return;
+    setActivePanelTab('properties');
     setAdjustmentOpen(false);
     setFilterOpen(false);
     setTextToolOpen(false);
@@ -979,6 +991,7 @@ function EditorPage({
   const toggleAdjustments = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     if (!finishTextEdit()) return;
+    setActivePanelTab('properties');
     setTextToolOpen(false);
     setShapeToolOpen(false);
     if (adjustmentOpen) {
@@ -993,6 +1006,7 @@ function EditorPage({
   const toggleFilters = () => {
     if (cropPending || resizePending || exportBusy || status.phase === 'loading') return;
     if (!finishTextEdit()) return;
+    setActivePanelTab('properties');
     setTextToolOpen(false);
     setShapeToolOpen(false);
     if (filterOpen) {
@@ -1017,6 +1031,7 @@ function EditorPage({
   const documentActionLocked = exportBusy || textFontLoading || Boolean(cropPending || resizePending || adjustmentOperationActive);
   const displayedAdjustments = adjustmentPreview ?? snapshotAdjustments(snapshot);
   const previewCanvasSnapshot = previewSnapshot;
+  const hasVisibleContent = snapshot.scene.some((item) => item.visible);
 
   return (
     <div className="editor-shell">
@@ -1102,6 +1117,7 @@ function EditorPage({
             onTextCommitted={onApplyText}
             onShapeSelected={handleShapeSelected}
             onShapeCommitted={onApplyShape}
+            onLayerCommitted={onApplyLayer}
           >
             <EditorStatus status={status} />
           </EditorCanvas>
@@ -1109,12 +1125,36 @@ function EditorPage({
 
         <aside
           id="editor-properties-panel"
-          className={`properties-panel${panelOpen ? ' properties-panel--open' : ''}`}
+          className={`properties-panel${panelOpen ? ' properties-panel--open' : ''}${activePanelTab === 'layers' ? ' properties-panel--layers' : ''}`}
           aria-labelledby="properties-title"
         >
           <div className="properties-panel__heading">
             <h2 id="properties-title">Thuộc tính</h2>
             <span>{activeTool ?? '—'}</span>
+          </div>
+          <div className="properties-panel__tabs" aria-label="Chọn bảng chỉnh sửa">
+            <button
+              className="properties-panel__tab"
+              type="button"
+              aria-pressed={activePanelTab === 'properties'}
+              disabled={documentActionLocked || status.phase === 'loading'}
+              onClick={() => {
+                if (!finishTextEdit()) return;
+                setActivePanelTab('properties');
+                setPanelOpen(true);
+              }}
+            >Thuộc tính</button>
+            <button
+              className="properties-panel__tab"
+              type="button"
+              aria-pressed={activePanelTab === 'layers'}
+              disabled={documentActionLocked || status.phase === 'loading'}
+              onClick={() => {
+                if (!finishTextEdit()) return;
+                setActivePanelTab('layers');
+                setPanelOpen(true);
+              }}
+            >Lớp</button>
           </div>
           {cropPending ? (
             <section className="crop-controls" aria-labelledby="crop-controls-title">
@@ -1207,6 +1247,21 @@ function EditorPage({
                 <button className="button button-secondary" type="button" onClick={cancelResize}>Hủy resize</button>
               </div>
             </section>
+          ) : activePanelTab === 'layers' ? (
+            <LayersPanel
+              snapshot={snapshot}
+              selectedId={selectedText?.id ?? selectedShape?.id ?? null}
+              disabled={documentActionLocked || status.phase === 'loading'}
+              onSelect={(id) => { canvasActionsRef.current?.selectOverlay(id); }}
+              onVisibilityChange={(id, visible) => {
+                canvasActionsRef.current?.setOverlayVisibility(id, visible);
+                setActivePanelTab('layers');
+              }}
+              onDelete={(id) => {
+                canvasActionsRef.current?.deleteOverlay(id);
+                setActivePanelTab('layers');
+              }}
+            />
           ) : filterOpen ? (
             <PresetControls
               candidate={candidate}
@@ -1516,11 +1571,12 @@ function EditorPage({
               <p>Chọn Cắt, Kích thước, Điều chỉnh, Bộ lọc, Chữ hoặc Hình khối để thao tác với ảnh.</p>
             </div>
           )}
-          <div className="properties-note">
+          <div className={`properties-note${activePanelTab === 'layers' ? ' properties-note--layers' : ''}`}>
             <span className="properties-note__dot" aria-hidden="true" />
             <p>{cropPending
               ? 'Khung cắt chỉ tồn tại trong phiên đang mở và không làm thay đổi lịch sử.'
             : resizePending ? 'Áp dụng sẽ scale toàn bộ nội dung và có thể hoàn tác bằng Undo.'
+                : activePanelTab === 'layers' ? 'Thay đổi hiển thị và xóa lớp được lưu trong lịch sử.'
                 : adjustmentOpen || filterOpen ? 'Màu chỉ tác động ảnh nền; hình học và lớp phủ được giữ nguyên.'
                   : textToolOpen ? 'Hoàn tất mỗi phiên sửa chữ thành một bước trong lịch sử; Escape hủy phiên hiện tại.'
                     : shapeToolOpen ? 'Thêm hình, thao tác hình học hoặc đổi thuộc tính được lưu trong lịch sử.'
@@ -1620,6 +1676,11 @@ function EditorPage({
           </button>
         </form>
         {exportBusy && <p className="export-status" role="status" aria-live="polite">Đang render ảnh ở kích thước tài liệu…</p>}
+        {!hasVisibleContent && (
+          <p className="export-empty-warning" role="status">
+            Tài liệu hiện không có nội dung hiển thị. PNG sẽ trong suốt; JPG dùng màu nền đã chọn.
+          </p>
+        )}
         {exportError && <p className="export-error" role="alert">{exportError}</p>}
         {downloadUrl && (
           <div className="export-ready" role="status">
@@ -1930,6 +1991,7 @@ export default function App() {
           onApplyAdjustments={applyAdjustments}
           onApplyText={applyAdjustments}
           onApplyShape={applyAdjustments}
+          onApplyLayer={applyAdjustments}
           onChoose={openFilePicker}
           replaceButtonRef={editorReplaceButtonRef}
           detachImageRef={detachImageRef}
