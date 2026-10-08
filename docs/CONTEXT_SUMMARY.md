@@ -31,12 +31,12 @@ Hai tệp ban đầu được tạo tại gốc. Theo yêu cầu tiếp theo, đ
 | Hạng mục | Trạng thái và bằng chứng |
 |---|---|
 | PRD | Có tài liệu mục 1–43, FR-01–15, AC-01–42; đã được commit |
-| Roadmap | Có kế hoạch 30 ngày công, 6 phase; Day 6 import, Day 7 history và Day 8 source-image geometry/pan/export đã implementation/kiểm tra cục bộ; Day 8 chưa đủ 100% (AC-11/30/31 và evidence AC-04 còn thiếu); Gate 1 đạt cho vertical slice ảnh nguồn |
+| Roadmap | Có kế hoạch 30 ngày công, 6 phase; Day 6 import, Day 7 history, Day 8 source-image geometry/pan/export và Day 9 crop pending đã implementation/kiểm tra cục bộ; Day 9 chưa Apply crop, AC-07/08 còn một phần; Gate 1 đạt cho vertical slice ảnh nguồn |
 | Hướng dẫn agent | Có `AGENT.md`, quy tắc triển khai, 42 AC và hướng dẫn đọc hai tài liệu trong `docs/` |
-| Ứng dụng | Home/Editor/Privacy dùng History API trong phiên. Import một ảnh và history trong RAM; Day 8 thêm xoay/lật có undo, pan viewport và PNG/JPG export. Chưa có overlay text/shape, draft hoặc chỉnh màu/crop sản phẩm |
+| Ứng dụng | Home/Editor/Privacy dùng History API trong phiên. Import một ảnh và history trong RAM; Day 8 thêm xoay/lật có undo, pan viewport và PNG/JPG export; Day 9 thêm crop pending DOM overlay, tỷ lệ và numeric controls, chưa áp hình học lên tài liệu. Chưa có overlay text/shape, draft hoặc chỉnh màu |
 | Toolchain | Có `package.json`, `package-lock.json`, Vite và TypeScript strict; `dev`, `typecheck`, `build`, `preview` |
 | Lưu trữ, export, dịch vụ | IndexedDB draft còn ở Day 3 harness; sản phẩm tạo PNG/JPG blob cục bộ với MIME/dimensions đã kiểm. Không có backend xử lý ảnh |
-| Kiểm thử/triển khai | Day 8 typecheck/build pass, bundle cảnh báo 536.22 kB >500 kB; manual Day 8 harness pass geometry/history, PNG alpha/rotation, WebP 1024×772 output và JPG nền. Browser localhost: PNG 3×1 → rotate 1×3 → Undo về 3×1; PNG/JPG blob link sẵn sàng; pan WebP 1024×772 giữ document dimensions. Day 8 chưa đủ 100%: AC-04 chưa so sánh zoom/DPR; AC-11 thiếu overlay; AC-30 thiếu proxy/text; AC-31 failure/retry chưa kiểm. Download xuống đĩa, browser version, mobile riêng, screen reader, network audit, picker cancel/multi-file drop và overlay selection chưa xác minh |
+| Kiểm thử/triển khai | Day 9 `npm.cmd run typecheck` và `npm.cmd run build` pass; bundle 543.09 kB >500 kB; manual Day 9 harness pass 4 nhóm assert. Browser localhost với PNG 3×1 kiểm disabled ratio có lý do; WebP 1024×772 kiểm centered ratio 1:1/4:3, corner drag 4:3 thành pending 820×615, lỗi numeric và sửa, overlay theo pan/zoom, Cancel/Escape và khóa thao tác; mobile viewport 391×845 có documentWidth 376 px, không overflow ngang. Crop chưa Apply, draft chưa có; AC-07/08 chỉ một phần. Day 8 còn thiếu cross-zoom/DPR, overlay sản phẩm, proxy/text và encode/memory failure/retry. Browser version, thiết bị mobile thật, screen reader, network audit, picker cancel/multi-file drop và tải file xuống đĩa chưa xác minh |
 
 Wireframe ASCII, ví dụ TypeScript, cây thư mục và API nội bộ trong PRD là thiết kế đề xuất. Không coi chúng là mã ứng dụng hoặc dữ liệu mô phỏng đang chạy.
 
@@ -88,7 +88,7 @@ Luồng thiết kế: UI → command → trạng thái document/scene → snapsh
 
 **Day 1–3 hoàn thành ở mức decision log/toolchain và spike; Gate 0 đạt trong phạm vi harness; Day 4 hoàn thành app shell; Day 5 canvas lifecycle/viewport đã được kiểm Fit/zoom trên document trong Day 6; Day 6 import đã implementation và kiểm một phần.** Người dùng xác nhận UI chỉ tải một ảnh, nhưng không ghi nhận kênh/thao tác hoặc browser; hủy picker chưa xác minh và chưa coi là đã kiểm thả nhiều file. AC-03 còn bằng chứng một phần; Gate 1 chưa đạt vì history, rotate/flip và export sản phẩm chưa có. Ngày là ngày công tương đối, không phải lịch đã cam kết. Roadmap giả định một developer biết React/TypeScript, thêm dự phòng 15–25%. Không tự publish production dựa trên ngày 30.
 
-**Cập nhật hiện trạng 08/10/2026:** Day 7 history core và Day 8 vertical slice ảnh nguồn đã được triển khai, kiểm tra cục bộ; mô tả cũ ngay phía trên là mốc trước Day 7. History có lệnh geometry trong UI và Undo đã kiểm; AC-23–25 còn thiếu thao tác edit khác. Day 8 chưa đủ 100%: AC-04 chưa kiểm cross-zoom/DPR; AC-11 thiếu overlay; AC-12 chỉ có geometry matrix evidence; AC-28 pass; AC-30 thiếu proxy/text; AC-31 chưa kiểm failure/retry. Gate 1 đạt cho source-image flow, không bao gồm overlay/selection.
+**Cập nhật hiện trạng 08/10/2026:** Day 7 history core, Day 8 source-image vertical slice và Day 9 crop pending đã được triển khai, kiểm tra cục bộ; mô tả cũ phía trên là các mốc lịch sử. Day 9 lưu ratio/rectangle/form error trong React state của EditorPage; Escape/Cancel loại pending state, còn pan/zoom cập nhật overlay và không đổi document. Chưa có Apply, crop commit, draft hay overlay text/shape; AC-07/08 chỉ có bằng chứng một phần. Day 8 chưa đủ 100%: AC-04 chưa kiểm cross-zoom/DPR; AC-11 thiếu overlay; AC-12 chỉ có geometry matrix evidence; AC-28 pass; AC-30 thiếu proxy/text; AC-31 chưa kiểm failure/retry. Gate 1 đạt cho source-image flow, không bao gồm overlay/selection.
 
 ## 8. Kiểm tra và giới hạn bằng chứng
 
@@ -120,7 +120,7 @@ Rủi ro chính còn lại là AC-03 picker cancel/multi-file drop chưa kiểm 
 
 Bước tiếp theo theo roadmap là Day 7 baseline/history. Hủy picker và thả nhiều file vẫn cần spot-check AC-03; mount/unmount Canvas lặp cũng chưa xác minh lại khi có ảnh. Gate 1 chưa đạt, còn phụ thuộc history, rotate/flip và PNG/JPG export. Đây là ghi nhận trước Day 7.
 
-**Cập nhật sau Day 8 (08/10/2026):** bước kế tiếp theo roadmap là Day 9 crop pending. Gate 1 đạt cho source-image vertical slice. AC-03 picker cancel/multi-file drop, overlay selection, download xuống đĩa, kiểm thử mobile/browser bổ sung và Canvas mount/unmount lặp trên ảnh vẫn cần xác minh; draft chưa được triển khai.
+**Cập nhật sau Day 9 (08/10/2026):** phần crop pending của Day 9 có harness/core và UI smoke cục bộ; bước kế tiếp theo roadmap là Day 10 áp dụng crop lên document. AC-07/08 còn một phần vì chưa Apply, draft không tồn tại và chưa kiểm snapshot/history/draft bằng thao tác sản phẩm đầy đủ. AC-03 picker cancel/multi-file drop, overlay selection, download xuống đĩa, thiết bị mobile thật/browser bổ sung và Canvas mount/unmount lặp trên ảnh vẫn cần xác minh; draft chưa được triển khai.
 
 ## 10. Cách cập nhật
 

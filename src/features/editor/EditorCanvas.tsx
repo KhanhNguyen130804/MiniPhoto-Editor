@@ -1,7 +1,8 @@
 import { Canvas, FabricImage, type TMat2D } from 'fabric';
-import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react';
 import { applyDocumentTransform, type GeometryCommand } from './engine/geometry';
 import type { EditorSnapshot } from './engine/snapshot';
+import { resizeCropRect, type CropHandle, type CropRatio, type CropRect } from './engine/crop';
 
 type Size = { width: number; height: number };
 
@@ -11,14 +12,23 @@ type EditorCanvasProps = {
   detachImageRef: { current: ((image: FabricImage) => void) | null };
   onTransform: (command: GeometryCommand) => void;
   documentActionsDisabled: boolean;
+  crop: { ratio: CropRatio; rect: CropRect } | null;
+  onCropChange: (rect: CropRect) => void;
   children: ReactNode;
 };
 
 type PanStart = { pointerId: number; x: number; y: number; transform: TMat2D };
+type CropDrag = { pointerId: number; handle: CropHandle; start: { x: number; y: number }; rect: CropRect };
 
 const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 1.2;
+const FREE_CROP_HANDLES: readonly Exclude<CropHandle, 'move'>[] = ['n', 'ne', 'e', 'se', 's', 'sw', 'w', 'nw'];
+const FIXED_CROP_HANDLES: readonly Exclude<CropHandle, 'move'>[] = ['ne', 'se', 'sw', 'nw'];
+const CROP_HANDLE_LABELS: Record<Exclude<CropHandle, 'move'>, string> = {
+  n: 'cạnh trên', ne: 'góc trên phải', e: 'cạnh phải', se: 'góc dưới phải',
+  s: 'cạnh dưới', sw: 'góc dưới trái', w: 'cạnh trái', nw: 'góc trên trái',
+};
 
 function validSize(size: Size | null): size is Size {
   return size !== null
@@ -51,7 +61,7 @@ function fitZoom(documentSize: Size, viewportSize: Size) {
   return Math.min(viewportSize.width / documentSize.width, viewportSize.height / documentSize.height, MAX_ZOOM);
 }
 
-export default function EditorCanvas({ snapshot, image, detachImageRef, onTransform, documentActionsDisabled, children }: EditorCanvasProps) {
+export default function EditorCanvas({ snapshot, image, detachImageRef, onTransform, documentActionsDisabled, crop, onCropChange, children }: EditorCanvasProps) {
   const documentSize: Size = snapshot.document;
   const surfaceRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<Canvas | null>(null);
@@ -62,7 +72,9 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
   const viewportSizeRef = useRef<Size>({ width: 0, height: 0 });
   const disposeQueueRef = useRef<Promise<void>>(Promise.resolve());
   const panStartRef = useRef<PanStart | null>(null);
+  const cropDragRef = useRef<CropDrag | null>(null);
   const [viewportSize, setViewportSize] = useState<Size>({ width: 0, height: 0 });
+  const [viewportTransform, setViewportTransform] = useState<TMat2D>([1, 0, 0, 1, 0, 0]);
   const [zoom, setZoom] = useState(1);
   const [panMode, setPanMode] = useState(false);
   const [spacePan, setSpacePan] = useState(false);
@@ -123,6 +135,10 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
     canvas.requestRenderAll();
   };
 
+  const syncViewportTransform = (canvas = canvasRef.current) => {
+    if (canvas) setViewportTransform([...canvas.viewportTransform] as TMat2D);
+  };
+
   useEffect(() => {
     detachImageRef.current = detachImage;
     const surface = surfaceRef.current;
@@ -148,6 +164,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
       const currentDocument = documentSizeRef.current;
       if (validSize(currentDocument)) {
         centerDocument(canvas, currentDocument, nextSize, canvas.getZoom());
+        syncViewportTransform(canvas);
       }
     };
 
@@ -180,6 +197,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
       if (validSize(currentDocument)) {
         const initialZoom = fitZoom(currentDocument, initialSize);
         centerDocument(canvas, currentDocument, initialSize, initialZoom);
+        syncViewportTransform(canvas);
         setZoom(initialZoom);
       }
 
@@ -238,6 +256,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
 
     const nextZoom = fitZoom(documentSize, viewport);
     centerDocument(canvas, documentSize, viewport, nextZoom);
+    syncViewportTransform(canvas);
     setZoom(nextZoom);
   }, [documentSize?.width, documentSize?.height, image]);
 
@@ -253,6 +272,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
 
     const boundedZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, nextZoom));
     centerDocument(canvas, documentSize, viewportSize, boundedZoom);
+    syncViewportTransform(canvas);
     setZoom(boundedZoom);
   };
 
@@ -263,6 +283,7 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
 
     const fittedZoom = fitZoom(documentSize, viewportSize);
     centerDocument(canvas, documentSize, viewportSize, fittedZoom);
+    syncViewportTransform(canvas);
     setZoom(fittedZoom);
   };
 
@@ -291,12 +312,56 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
       e + event.clientX - start.x,
       f + event.clientY - start.y,
     ]);
+    syncViewportTransform(canvas);
   };
 
   const endPan = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (panStartRef.current?.pointerId !== event.pointerId) return;
     panStartRef.current = null;
     setPanning(false);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const startCropDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!crop || panMode || spacePan || event.button !== 0) return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const target = event.target instanceof Element
+      ? event.target.closest<HTMLElement>('[data-crop-handle]')
+      : null;
+    const handle = (target?.dataset.cropHandle ?? 'move') as CropHandle;
+    event.preventDefault();
+    event.stopPropagation();
+    cropDragRef.current = {
+      pointerId: event.pointerId,
+      handle,
+      start: canvas.getScenePoint(event.nativeEvent),
+      rect: crop.rect,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+
+  const moveCropDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = cropDragRef.current;
+    const canvas = canvasRef.current;
+    if (!drag || !canvas || drag.pointerId !== event.pointerId || !crop) return;
+    event.preventDefault();
+    event.stopPropagation();
+    onCropChange(resizeCropRect(
+      drag.rect,
+      drag.handle,
+      drag.start,
+      canvas.getScenePoint(event.nativeEvent),
+      documentSizeRef.current,
+      crop.ratio,
+    ));
+  };
+
+  const endCropDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (cropDragRef.current?.pointerId !== event.pointerId) return;
+    cropDragRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
@@ -312,6 +377,15 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
   const handleStageKeyUp = (event: ReactKeyboardEvent<HTMLDivElement>) => {
     if (event.code === 'Space') setSpacePan(false);
   };
+
+  const [a, b, c, d, e, f] = viewportTransform;
+  const cropFrameStyle: CSSProperties | undefined = crop ? {
+    left: a * crop.rect.x + c * crop.rect.y + e,
+    top: b * crop.rect.x + d * crop.rect.y + f,
+    width: a * crop.rect.width,
+    height: d * crop.rect.height,
+  } : undefined;
+  const cropHandles = crop?.ratio === 'free' ? FREE_CROP_HANDLES : FIXED_CROP_HANDLES;
 
   return (
     <>
@@ -352,6 +426,31 @@ export default function EditorCanvas({ snapshot, image, detachImageRef, onTransf
         onBlur={() => setSpacePan(false)}
       >
         <div className="canvas-surface" ref={surfaceRef} aria-hidden="true" />
+        {crop && cropFrameStyle && (
+          <div className="crop-overlay">
+            <div
+              className="crop-frame"
+              role="group"
+              aria-label="Khung cắt. Kéo để di chuyển; dùng các trường số để chỉnh chính xác."
+              style={cropFrameStyle}
+              onPointerDown={startCropDrag}
+              onPointerMove={moveCropDrag}
+              onPointerUp={endCropDrag}
+              onPointerCancel={endCropDrag}
+              onLostPointerCapture={endCropDrag}
+            >
+              {cropHandles.map((handle) => (
+                <span
+                  key={handle}
+                  className={`crop-handle crop-handle--${handle}`}
+                  data-crop-handle={handle}
+                  aria-hidden="true"
+                  title={`Đổi ${CROP_HANDLE_LABELS[handle]}`}
+                />
+              ))}
+            </div>
+          </div>
+        )}
         {canvasError ? (
           <div className="canvas-message canvas-runtime-error" role="alert">
             <span className="state-icon state-icon--error" aria-hidden="true">!</span>

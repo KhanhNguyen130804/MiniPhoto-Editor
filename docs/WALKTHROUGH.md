@@ -2,7 +2,7 @@
 
 Ngày ghi nhận: **08/10/2026**, Asia/Saigon.
 
-Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4, canvas lifecycle/viewport Day 5, luồng import ảnh Day 6 và history core Day 7. Chưa có lệnh chỉnh sửa sản phẩm, nên app chỉ có baseline và Undo/Redo vẫn disabled; export và lưu nháp sản phẩm chưa triển khai. Walkthrough phân biệt shell, spike cô lập, implementation và hành vi đã kiểm chứng.
+Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai. Repository hiện có app shell Day 4, canvas lifecycle/viewport Day 5, luồng import ảnh Day 6, history core Day 7, geometry/pan/export Day 8 và crop pending Day 9. Rotate/flip là lệnh chỉnh sửa sản phẩm; crop chưa Apply. Export PNG/JPG có trong app, còn draft sản phẩm và overlay text/shape chưa triển khai. Walkthrough phân biệt shell, spike cô lập, implementation và hành vi đã kiểm chứng.
 
 ## 1. Kết quả hiện có
 
@@ -15,7 +15,7 @@ Tài liệu ghi lại kết quả khảo sát và các bước đã triển khai
 | [CONTEXT_SUMMARY.md](CONTEXT_SUMMARY.md) | Bối cảnh ngắn để tiếp tục task, hiện trạng và các quyết định còn mở |
 | `WALKTHROUGH.md` | Giải thích đầu ra, quá trình và ranh giới bằng chứng |
 
-Sau Day 7, Home và Editor dùng chung luồng chọn ảnh; dropzone Home nhận một file. Candidate hợp lệ được giải mã vào Fabric Canvas, fit viewport và có thể thay sau xác nhận. Khi candidate được chấp nhận, `App` tạo snapshot baseline và history trong RAM; state này sống qua việc unmount/remount route. Harness Day 2 kiểm tra import, harness Day 7 kiểm tra history core. Chưa có lệnh chỉnh sửa tạo commit trong UI; export và persistence chưa có trong app.
+Trong app hiện tại, Home và Editor dùng chung luồng chọn ảnh; dropzone Home nhận một file. Candidate hợp lệ được giải mã vào Fabric Canvas, fit viewport và có thể thay sau xác nhận. Khi candidate được chấp nhận, `App` tạo snapshot baseline và history trong RAM; rotate/flip commit vào history, export PNG/JPG render từ document. Day 9 Crop chỉ tạo state tạm trong `EditorPage`, DOM overlay bám viewport Fabric; Cancel/Escape bỏ state đó. Harness Day 2/7/8/9 kiểm các phần import, history, geometry/export và crop core. Draft và overlay text/shape chưa có trong app.
 
 ## 2. Công việc trước task hiện tại — bằng chứng lịch sử
 
@@ -102,9 +102,9 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 
 ## 7. Hiện trạng và bước tiếp theo
 
-**Hiện trạng 08/10/2026:** Day 8 đã thêm rotate/flip, pan viewport và PNG/JPG export cho source-image; Gate 1 đạt theo vertical slice ảnh nguồn (import → geometry → undo → output). Day 8 chưa hoàn thành 100%: AC-04 chỉ có bằng chứng implementation/single fixture, chưa so sánh zoom 50%/200% và DPR khác; AC-11 chưa đạt do chưa có overlay/layer sản phẩm; AC-12 có bằng chứng ma trận tổng hợp; AC-28 pass harness; AC-30 mới kiểm output đúng kích thước nguồn, chưa có luồng proxy/text; AC-31 chưa chạy tình huống encode/memory failure và retry. AC-03 vẫn một phần (multi-file drop và hủy picker chưa kiểm); AC-41 chưa xác minh. Build còn cảnh báo bundle 536.22 kB >500 kB. Chi tiết ở mục 12, 14–16 và [Decision Log](DECISION_LOG.md).
+**Hiện trạng 08/10/2026:** Day 8 đã thêm rotate/flip, pan viewport và PNG/JPG export cho source-image; Day 9 thêm crop pending, chưa Apply; Gate 1 đạt theo vertical slice ảnh nguồn (import → geometry → undo → output). Day 9 Cancel/Escape và ratio/bounds có evidence một phần; crop chưa commit và draft chưa có. Day 8 chưa hoàn thành 100%: AC-04 chỉ có bằng chứng implementation/single fixture, chưa so sánh zoom 50%/200% và DPR khác; AC-11 chưa đạt do chưa có overlay/layer sản phẩm; AC-12 có bằng chứng ma trận tổng hợp; AC-28 pass harness; AC-30 mới kiểm output đúng kích thước nguồn, chưa có luồng proxy/text; AC-31 chưa chạy tình huống encode/memory failure và retry. AC-03 vẫn một phần (multi-file drop và hủy picker chưa kiểm); AC-41 chưa xác minh. Build Day 9 cảnh báo bundle 543.09 kB >500 kB. Chi tiết ở mục 12, 14–17 và [Decision Log](DECISION_LOG.md).
 
-**Bước kế tiếp theo roadmap:** Day 9 crop pending. AC-11 và AC-30 cần quay lại khi overlay/text và proxy pipeline có mặt; hoàn thiện evidence AC-04/31 trước khi đánh dấu Day 8 đầy đủ. Gate 1 đã đạt ở phạm vi trên, không thay thế các AC còn thiếu.
+**Bước kế tiếp theo roadmap:** Day 10 áp dụng crop. Hiện trạng Day 9 chưa thay đổi document/history; Day 10 Apply sẽ cần kiểm đúng bounds, no-op và Undo. AC-06 còn phụ thuộc overlay text/shape, còn AC-11/30 cần quay lại khi overlay/text và proxy pipeline có mặt; hoàn thiện evidence AC-04/31 trước khi đánh dấu Day 8 đầy đủ. Gate 1 đã đạt ở phạm vi trên, không thay thế các AC còn thiếu.
 
 ## 8. Phase 0 — Day 1 (07/10/2026)
 
@@ -178,3 +178,12 @@ Không sử dụng screenshot, mock, wireframe hoặc đọc tài liệu làm b�
 - `/tests/manual/day8-transform-export.html` + `.ts` pass 6 nhóm assert trong Codex In-app Browser: right/left và 4 lần xoay, double flip, sample điểm hidden/off-canvas qua shared matrix, scene metadata giữ nguyên, undo/redo, PNG 3×1 alpha và 1×3 sau rotate, WebP 1024×772 export đúng kích thước, JPG MIME/dimensions/opaque red background. Đây là kiểm engine/matrix; fixture layer hidden/off-canvas là dữ liệu tổng hợp, không phải layer sản phẩm.
 - `npm.cmd run typecheck` và `npm.cmd run build` pass; Vite cảnh báo bundle 536.20 kB vượt 500 kB. Trong app localhost: import PNG 3×1, nút xoay phải hiển thị 1×3, Undo khôi phục 3×1; dialog tạo PNG và JPG Blob, cho thấy link tải. Thay bằng WebP 1024×772 rồi kéo pan làm ảnh dịch trong stage, document vẫn 1024×772. Chưa bấm link tải nên chưa xác minh file trên đĩa.
 - Không có overlay/layer text hoặc shape trong schema/ứng dụng; selection chưa có đối tượng sản phẩm để chọn. AC-11 chưa đạt; AC-12 chỉ có bằng chứng ma trận tổng hợp, chưa kiểm trên scene có nhiều object. AC-04 chưa so sánh đủ zoom/DPR; AC-30 chưa có proxy/text; AC-31 chưa kiểm encode/memory failure và retry. Gate 1 đạt ở vertical slice ảnh nguồn (import → rotate → undo → PNG/JPG blob), nhưng Day 8 chưa hoàn thành 100%. Không bấm link tải xuống đĩa; không kiểm browser version, viewport mobile riêng, screen reader, network audit hoặc mở file ngoài browser.
+
+## 17. Phase 2 — Day 9 crop pending (08/10/2026)
+
+- `src/features/editor/engine/crop.ts` chứa model rectangle/ratio, khởi tạo Free toàn tài liệu, fixed ratio lớn nhất ở giữa theo bội nguyên, kiểm tra số nguyên/bounds và kéo/move có clamp. Fixed ratio dùng bốn corner handle; Free có tám handle cạnh/góc.
+- `src/App.tsx` giữ `PendingCrop`, field input và lỗi trong state của `EditorPage`; không gọi `commitHistory`, không sửa `EditorSnapshot`. Crop tool là tool duy nhất bật; Undo/Redo/export/thay ảnh/rotate/flip và tool khác bị khóa đến Cancel/Escape. Input không hợp lệ giữ rectangle hợp lệ cuối cùng và báo lỗi cạnh field.
+- `src/features/editor/EditorCanvas.tsx` đổi screen pointer sang document scene bằng `Canvas.getScenePoint`; overlay lấy `viewportTransform` để bám zoom/pan. Chế độ pan giữ hoạt động và tạm dừng crop drag. `src/app.css` tạo mask tối, lưới 3×3 và handles.
+- Thêm `tests/manual/day9-crop-pending.html` + `.ts` theo mẫu assert hiện có; thêm harness vào `tsconfig.json`, không thêm dependency. Bốn nhóm assert pass: tạo ratio/impossible ratio; clamp Free/fixed drag; validation integer/bounds/ratio; pending/discard không chạm snapshot/history.
+- `npm.cmd run typecheck` pass; `npm.cmd run build` pass, Vite cảnh báo bundle 543.09 kB lớn hơn 500 kB. Trong Codex In-app Browser với PNG 3×1, ratio 4:3, 3:4, 16:9, 9:16 disabled kèm lý do. Với WebP tĩnh 1024×772, UI tạo 1:1/4:3 căn giữa, numeric X vượt bounds hiện lỗi và nhập lại thì hết lỗi, đổi 4:3 W/H hợp lệ, kéo góc tạo khung pending 820×615; document status vẫn 1024×772. Pan dịch ảnh và frame cùng 50×30 CSS px; zoom 63→75% tính lại overlay. Undo/Redo/export/replace/rotate/flip disable; Escape và Hủy cắt bỏ pending và mở khóa; không kiểm draft vì app chưa có draft.
+- Ở viewport browser 391×845, `documentElement.scrollWidth` là 376 px (không overflow ngang); đây là browser viewport emulation, không phải thiết bị cảm ứng thật. Không kiểm screen reader, browser khác, DPR khác, keyboard resize handle hoặc phép crop Apply. **AC-07/08 chỉ có bằng chứng một phần; không đánh dấu đạt.** Day 10 vẫn chịu trách nhiệm commit và cập nhật hình học document.
