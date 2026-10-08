@@ -53,6 +53,24 @@ export function selectImagePreset(snapshot: EditorSnapshot, presetId: PresetId):
   };
 }
 
+export function createCompareSnapshot(snapshot: EditorSnapshot): EditorSnapshot {
+  return {
+    ...snapshot,
+    imageAppearance: {
+      ...snapshot.imageAppearance,
+      presetId: 'original',
+      presetVersion: CURRENT_PRESET_VERSION,
+      brightness: 0,
+      contrast: 0,
+      saturation: 0,
+    },
+    scene: snapshot.scene.map((item) => ({
+      ...item,
+      visible: item.role === 'source-image',
+    })),
+  };
+}
+
 function sliderFilters(brightness: number, contrast: number, saturation: number): FabricImage['filters'] {
   return [
     ...(brightness ? [new filters.Brightness({ brightness: brightness / 100 })] : []),

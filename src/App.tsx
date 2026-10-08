@@ -33,7 +33,7 @@ import {
 } from './features/editor/engine/geometry';
 import { calculateResize, type ResizeAxis, type ResizeDimensions, type ResizeError } from './features/editor/engine/resize';
 import { exportImage, probeExportFormat, type ExportFormat } from './features/editor/engine/exportImage';
-import { selectImagePreset, type ImageAdjustments } from './features/editor/engine/adjustmentFilters';
+import { createCompareSnapshot, selectImagePreset, type ImageAdjustments } from './features/editor/engine/adjustmentFilters';
 import { createDraftAutosave, type DraftAutosaveController, type DraftSaveStatus } from './features/editor/engine/draftAutosave';
 import {
   acquireDraftLease,
@@ -537,6 +537,7 @@ function EditorPage({
   const finishTextEdit = () => canvasActionsRef.current?.finishEditorEdit() !== false;
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [compareActive, setCompareActive] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<'properties' | 'layers'>('properties');
   const exportDialogRef = useRef<HTMLDialogElement>(null);
   const exportUrlRef = useRef<string | null>(null);
@@ -929,6 +930,50 @@ function EditorPage({
   const previewSnapshot = useMemo(() => adjustmentPreview
     ? { ...snapshot, imageAppearance: { ...snapshot.imageAppearance, ...adjustmentPreview } }
     : snapshot, [snapshot, adjustmentPreview]);
+  const compareSnapshot = useMemo(() => createCompareSnapshot(snapshot), [snapshot]);
+
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    const syncViewport = () => {
+      const height = viewport?.height ?? window.innerHeight;
+      const offsetTop = viewport?.offsetTop ?? 0;
+      document.documentElement.style.setProperty('--visual-viewport-height', `${height}px`);
+      document.documentElement.style.setProperty(
+        '--visual-viewport-bottom-inset',
+        `${Math.max(0, window.innerHeight - offsetTop - height)}px`,
+      );
+      requestAnimationFrame(() => {
+        const textArea = textAreaRef.current;
+        if (textArea && document.activeElement === textArea) {
+          textArea.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+        }
+      });
+    };
+    syncViewport();
+    window.addEventListener('resize', syncViewport);
+    viewport?.addEventListener('resize', syncViewport);
+    viewport?.addEventListener('scroll', syncViewport);
+    return () => {
+      window.removeEventListener('resize', syncViewport);
+      viewport?.removeEventListener('resize', syncViewport);
+      viewport?.removeEventListener('scroll', syncViewport);
+      document.documentElement.style.removeProperty('--visual-viewport-height');
+      document.documentElement.style.removeProperty('--visual-viewport-bottom-inset');
+    };
+  }, []);
+
+  useEffect(() => {
+    const stopCompare = () => setCompareActive(false);
+    const stopCompareWhenHidden = () => {
+      if (document.visibilityState !== 'visible') stopCompare();
+    };
+    window.addEventListener('blur', stopCompare);
+    document.addEventListener('visibilitychange', stopCompareWhenHidden);
+    return () => {
+      window.removeEventListener('blur', stopCompare);
+      document.removeEventListener('visibilitychange', stopCompareWhenHidden);
+    };
+  }, []);
 
   useEffect(() => {
     clearAdjustmentDraft();
@@ -1205,8 +1250,14 @@ function EditorPage({
     : filterOpen ? 'Bộ lọc' : adjustmentOpen ? 'Điều chỉnh' : textToolOpen ? 'Chữ' : shapeToolOpen ? 'Hình khối' : null;
   const documentActionLocked = exportBusy || textFontLoading || Boolean(cropPending || resizePending || adjustmentOperationActive);
   const displayedAdjustments = adjustmentPreview ?? snapshotAdjustments(snapshot);
-  const previewCanvasSnapshot = previewSnapshot;
+  const previewCanvasSnapshot = compareActive ? compareSnapshot : previewSnapshot;
   const hasVisibleContent = snapshot.scene.some((item) => item.visible);
+  const compareDisabled = documentActionLocked || status.phase === 'loading';
+  const startCompare = () => {
+    if (compareDisabled || !finishTextEdit()) return;
+    setCompareActive(true);
+  };
+  const stopCompare = () => setCompareActive(false);
 
   useEffect(() => {
     const finishNudge = () => canvasActionsRef.current?.finishNudge();
@@ -1278,15 +1329,15 @@ function EditorPage({
           <span className="document-name" title={candidate.source.name}>{candidate.source.name}</span>
         </div>
         <div className="editor-topbar__actions">
-          <button className="editor-quiet-button" type="button" onClick={() => { if (finishTextEdit()) onUndo(); }} disabled={!undoEnabled || documentActionLocked}>Hoàn tác</button>
-          <button className="editor-quiet-button" type="button" onClick={() => { if (finishTextEdit()) onRedo(); }} disabled={!redoEnabled || documentActionLocked}>Làm lại</button>
-          <button className="editor-quiet-button" type="button" onClick={(event) => { if (finishTextEdit()) onChoose(event); }} ref={replaceButtonRef} disabled={status.phase === 'loading' || documentActionLocked}>
+          <button className="editor-quiet-button" type="button" onClick={() => { if (finishTextEdit()) onUndo(); }} disabled={!undoEnabled || documentActionLocked || compareActive}>Hoàn tác</button>
+          <button className="editor-quiet-button" type="button" onClick={() => { if (finishTextEdit()) onRedo(); }} disabled={!redoEnabled || documentActionLocked || compareActive}>Làm lại</button>
+          <button className="editor-quiet-button" type="button" onClick={(event) => { if (finishTextEdit()) onChoose(event); }} ref={replaceButtonRef} disabled={status.phase === 'loading' || documentActionLocked || compareActive}>
             Thay ảnh
           </button>
           <button
             className="button button-primary editor-export"
             type="button"
-            disabled={documentActionLocked}
+            disabled={documentActionLocked || compareActive}
             onClick={openExportDialog}
           >
             Xuất ảnh
@@ -1296,6 +1347,7 @@ function EditorPage({
             type="button"
             aria-expanded={panelOpen}
             aria-controls="editor-properties-panel"
+            disabled={compareActive}
             onClick={() => {
               if (!finishTextEdit()) return;
               setPanelOpen((open) => !open);
@@ -1314,7 +1366,7 @@ function EditorPage({
               className={`tool-item${activeTool === tool ? ' tool-item--active' : ''}`}
               type="button"
               key={tool}
-              disabled={(!['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'].includes(tool)) || exportBusy || status.phase === 'loading'
+              disabled={compareActive || (!['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'].includes(tool)) || exportBusy || status.phase === 'loading'
                 || Boolean((cropPending || resizePending) && activeTool !== tool)}
               aria-pressed={['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'].includes(tool) ? activeTool === tool : undefined}
               onClick={tool === 'Cắt'
@@ -1329,6 +1381,40 @@ function EditorPage({
               <span>{tool}</span>
             </button>
           ))}
+          <button
+            className={`tool-item${compareActive ? ' tool-item--active tool-item--compare-active' : ''}`}
+            type="button"
+            aria-pressed={compareActive}
+            aria-label={compareActive ? 'Đang so sánh; giữ để xem trước chỉnh sửa' : 'Giữ để so sánh ảnh trước chỉnh sửa'}
+            title="Giữ để bỏ màu và ẩn chữ/hình; thả để quay lại"
+            disabled={compareDisabled || Boolean(cropPending || resizePending)}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              startCompare();
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }}
+            onPointerUp={stopCompare}
+            onPointerCancel={stopCompare}
+            onLostPointerCapture={stopCompare}
+            onKeyDown={(event) => {
+              if ((event.key === ' ' || event.key === 'Enter') && !event.repeat) {
+                event.preventDefault();
+                event.stopPropagation();
+                startCompare();
+              }
+            }}
+            onKeyUp={(event) => {
+              if (event.key === ' ' || event.key === 'Enter') {
+                event.preventDefault();
+                event.stopPropagation();
+                stopCompare();
+              }
+            }}
+            onBlur={stopCompare}
+          >
+            <span className="tool-item__icon" aria-hidden="true">◉</span>
+            <span>{compareActive ? 'Đang so sánh' : 'So sánh'}</span>
+          </button>
         </aside>
 
         <main className="workspace" aria-label="Vùng làm việc">
@@ -1338,7 +1424,7 @@ function EditorPage({
             snapshot={previewCanvasSnapshot}
             detachImageRef={detachImageRef}
             onTransform={onTransform}
-            documentActionsDisabled={documentActionLocked}
+            documentActionsDisabled={documentActionLocked || compareActive}
             crop={cropPending}
             onCropChange={updateCropRect}
             selectedTextId={selectedText?.id ?? null}
@@ -1358,10 +1444,14 @@ function EditorPage({
           id="editor-properties-panel"
           className={`properties-panel${panelOpen ? ' properties-panel--open' : ''}${activePanelTab === 'layers' ? ' properties-panel--layers' : ''}`}
           aria-labelledby="properties-title"
+          inert={compareActive}
         >
           <div className="properties-panel__heading">
             <h2 id="properties-title">Thuộc tính</h2>
             <span>{activeTool ?? '—'}</span>
+            <button className="properties-panel__close" type="button" onClick={() => setPanelOpen(false)} aria-label="Đóng bảng công cụ">
+              Đóng
+            </button>
           </div>
           <div className="properties-panel__tabs" aria-label="Chọn bảng chỉnh sửa">
             <button
@@ -1605,7 +1695,10 @@ function EditorPage({
                       rows={3}
                       value={selectedText.text}
                       aria-describedby="selected-text-count"
-                      onFocus={() => canvasActionsRef.current?.beginTextareaEdit(selectedText.id)}
+                      onFocus={() => {
+                        canvasActionsRef.current?.beginTextareaEdit(selectedText.id);
+                        requestAnimationFrame(() => textAreaRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+                      }}
                       onBlur={() => canvasActionsRef.current?.finishTextEdit()}
                       onChange={(event) => {
                         const text = normalizeTextContent(event.currentTarget.value);

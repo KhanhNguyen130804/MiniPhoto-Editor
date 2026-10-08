@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Day 25 — Compare và mobile</title>
+    <link rel="stylesheet" href="/src/app.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Day 25 — Compare và mobile</h1>
+      <p>Kiểm tra snapshot Compare không đổi history/draft và export vẫn theo snapshot được truyền vào.</p>
+      <button id="run" type="button">Chạy kiểm tra Day 25</button>
+      <pre id="results" role="status" aria-live="polite">Chưa chạy.</pre>
+      <h2>Browser smoke tại <code>/</code></h2>
+      <ol>
+        <li>Mở Editor với ảnh thử nghiệm; chờ trạng thái SAVED và ghi nhận revision/history.</li>
+        <li>Giữ So sánh: nền hiện lại, màu trở về Original, chữ/hình ẩn; thả hoặc nhấn Tab/chuyển focus để trở về bản sửa.</li>
+        <li>Kiểm tra Compare không đổi revision/history; mở Xuất ảnh sau khi thả và xác nhận ảnh tải theo bản sửa.</li>
+        <li>Ở 360×800 và 390×844, cuộn thanh công cụ ngang; mở/đóng sheet, xác nhận không tràn ngang và sheet tối đa 45% viewport.</li>
+        <li>Mở textarea để làm visual viewport co lại; xác nhận sheet và ô nhập vẫn nhìn thấy, rồi kiểm tra cancel pan/crop bằng touch emulation.</li>
+        <li>Chạy lại <code>/tests/manual/day22-draft-restore.html</code> và <code>/tests/manual/day24-export.html</code> ở viewport mobile.</li>
+      </ol>
+    </main>
+    <script type="module" src="./day25-compare-mobile.ts"></script>
+  </body>
+</html>
