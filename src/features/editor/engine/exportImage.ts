@@ -10,7 +10,27 @@ import type { EditorSnapshot } from './snapshot';
 import { applyImageAdjustments } from './adjustmentFilters';
 import { ensureSnapshotTextFonts } from './text';
 
-export type ExportFormat = 'png' | 'jpeg';
+export type ExportFormat = 'png' | 'jpeg' | 'webp';
+
+const MIME_TYPES: Record<ExportFormat, string> = {
+  png: 'image/png',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+};
+
+export async function probeExportFormat(format: ExportFormat): Promise<boolean> {
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 1;
+  try {
+    return await new Promise((resolve) => {
+      canvas.toBlob((blob) => resolve(blob?.type === MIME_TYPES[format]), MIME_TYPES[format], 0.9);
+    });
+  } catch {
+    return false;
+  } finally {
+    canvas.width = canvas.height = 0;
+  }
+}
 
 export type ExportOptions = {
   format: ExportFormat;
@@ -29,20 +49,20 @@ function validDocument(snapshot: EditorSnapshot): boolean {
 }
 
 function canvasBlob(canvas: HTMLCanvasElement, options: ExportOptions): Promise<Blob> {
-  const mimeType = options.format === 'jpeg' ? 'image/jpeg' : 'image/png';
+  const mimeType = MIME_TYPES[options.format];
   return new Promise((resolve, reject) => {
     canvas.toBlob(
       (blob) => {
         if (!blob) {
-          reject(new Error('Trình duyệt không tạo được file ảnh. Hãy thử lại.'));
+          reject(new Error('Không đủ bộ nhớ hoặc trình duyệt không tạo được file ảnh. Hãy giảm kích thước hoặc thử lại.'));
         } else if (blob.type !== mimeType) {
-          reject(new Error(`Trình duyệt không hỗ trợ xuất ${options.format.toUpperCase()} trên thiết bị này.`));
+          reject(new Error(`Trình duyệt không trả về MIME ${mimeType} như yêu cầu. Hãy chọn định dạng khác rồi thử lại.`));
         } else {
           resolve(blob);
         }
       },
       mimeType,
-      options.format === 'jpeg' ? options.quality / 100 : undefined,
+      options.format === 'png' ? undefined : options.quality / 100,
     );
   });
 }
@@ -56,8 +76,8 @@ export async function exportImage(
   if (snapshot.document.sourceAssetId !== candidate.assetId) {
     throw new Error('Ảnh nguồn không khớp với tài liệu đang mở.');
   }
-  if (!Number.isInteger(options.quality) || options.quality < 1 || options.quality > 100) {
-    throw new RangeError('Chất lượng JPG phải từ 1 đến 100.');
+  if (options.format !== 'png' && (!Number.isInteger(options.quality) || options.quality < 1 || options.quality > 100)) {
+    throw new RangeError('Chất lượng JPG/WebP phải từ 1 đến 100.');
   }
   if (options.format === 'jpeg' && !/^#[\da-f]{6}$/i.test(options.backgroundColor)) {
     throw new TypeError('Màu nền JPG không hợp lệ.');

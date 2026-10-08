@@ -32,7 +32,7 @@ import {
   type GeometryCommand,
 } from './features/editor/engine/geometry';
 import { calculateResize, type ResizeAxis, type ResizeDimensions, type ResizeError } from './features/editor/engine/resize';
-import { exportImage, type ExportFormat } from './features/editor/engine/exportImage';
+import { exportImage, probeExportFormat, type ExportFormat } from './features/editor/engine/exportImage';
 import { selectImagePreset, type ImageAdjustments } from './features/editor/engine/adjustmentFilters';
 import { createDraftAutosave, type DraftAutosaveController, type DraftSaveStatus } from './features/editor/engine/draftAutosave';
 import {
@@ -143,10 +143,21 @@ function makeExportBasename(sourceName: string): string {
 function exportFilename(basename: string, format: ExportFormat): string {
   const safe = basename
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, '')
-    .replace(/\.(?:png|jpe?g)$/i, '')
+    .replace(/\.(?:png|jpe?g|webp)$/i, '')
     .trim()
     .slice(0, 100) || 'miniphoto-edited';
-  return `${safe}.${format === 'jpeg' ? 'jpg' : 'png'}`;
+  return `${safe}.${format === 'jpeg' ? 'jpg' : format}`;
+}
+
+function defaultExportFormat(
+  candidate: ImageImportCandidate,
+  snapshot: EditorSnapshot,
+  supported: Record<ExportFormat, boolean>,
+): ExportFormat {
+  const source = snapshot.scene.find((item) => item.role === 'source-image');
+  const alphaRisk = (candidate.mimeType ?? candidate.source.type) !== 'image/jpeg' || !source?.visible;
+  const preferred: ExportFormat = alphaRisk ? 'png' : 'jpeg';
+  return supported[preferred] ? preferred : supported.png ? 'png' : supported.jpeg ? 'jpeg' : 'webp';
 }
 
 function importErrorMessage(error: unknown): string {
@@ -530,6 +541,8 @@ function EditorPage({
   const exportDialogRef = useRef<HTMLDialogElement>(null);
   const exportUrlRef = useRef<string | null>(null);
   const exportGenerationRef = useRef(0);
+  const exportOperationRef = useRef(0);
+  const [exportSupport, setExportSupport] = useState<Record<ExportFormat, boolean> | null>(null);
   const [exportFormat, setExportFormat] = useState<ExportFormat>('png');
   const [exportQuality, setExportQuality] = useState(90);
   const [exportBackground, setExportBackground] = useState('#ffffff');
@@ -1091,8 +1104,20 @@ function EditorPage({
     clearDownload();
   }, [candidate.assetId]);
 
+  useEffect(() => {
+    let active = true;
+    void Promise.all((['png', 'jpeg', 'webp'] as const).map(probeExportFormat)).then(([png, jpeg, webp]) => {
+      if (!active) return;
+      const supported = { png, jpeg, webp };
+      setExportSupport(supported);
+      setExportFormat(defaultExportFormat(candidate, latestSnapshotRef.current, supported));
+    });
+    return () => { active = false; };
+  }, [candidate.assetId]);
+
   useEffect(() => () => {
     exportGenerationRef.current += 1;
+    exportOperationRef.current += 1;
     if (exportUrlRef.current) URL.revokeObjectURL(exportUrlRef.current);
     exportUrlRef.current = null;
   }, []);
@@ -1103,6 +1128,7 @@ function EditorPage({
     setExportError('');
     setExportBusy(true);
     const generation = ++exportGenerationRef.current;
+    const operation = ++exportOperationRef.current;
     try {
       const blob = await exportImage(candidate, snapshot, {
         format: exportFormat,
@@ -1119,14 +1145,22 @@ function EditorPage({
         setExportError(error instanceof Error ? error.message : 'Không thể tạo file ảnh. Hãy thử lại.');
       }
     } finally {
-      if (generation === exportGenerationRef.current) setExportBusy(false);
+      if (operation === exportOperationRef.current) setExportBusy(false);
     }
   };
 
   const closeExportDialog = () => {
-    if (exportBusy) return;
+    exportGenerationRef.current += 1;
     clearDownload();
     setExportError('');
+  };
+
+  const openExportDialog = () => {
+    if (!finishTextEdit()) return;
+    setExportError('');
+    clearDownload();
+    if (exportSupport) setExportFormat(defaultExportFormat(candidate, latestSnapshotRef.current, exportSupport));
+    exportDialogRef.current?.showModal();
   };
 
   const toggleAdjustments = () => {
@@ -1253,11 +1287,7 @@ function EditorPage({
             className="button button-primary editor-export"
             type="button"
             disabled={documentActionLocked}
-            onClick={() => {
-              if (!finishTextEdit()) return;
-              setExportError('');
-              exportDialogRef.current?.showModal();
-            }}
+            onClick={openExportDialog}
           >
             Xuất ảnh
           </button>
@@ -1823,13 +1853,10 @@ function EditorPage({
         ref={exportDialogRef}
         className="export-dialog"
         aria-labelledby="export-dialog-title"
-        onCancel={(event) => {
-          if (exportBusy) event.preventDefault();
-        }}
         onClose={closeExportDialog}
       >
         <form method="dialog" className="dialog-close-row">
-          <button className="dialog-close" type="submit" aria-label="Đóng hộp thoại xuất ảnh" disabled={exportBusy}>×</button>
+          <button className="dialog-close" type="submit" aria-label="Đóng hộp thoại xuất ảnh">×</button>
         </form>
         <p className="eyebrow">TẢI ẢNH VỀ THIẾT BỊ</p>
         <h2 id="export-dialog-title">Xuất ảnh</h2>
@@ -1852,39 +1879,44 @@ function EditorPage({
                   clearDownload();
                 }}
               />
-              <span>.{exportFormat === 'jpeg' ? 'jpg' : 'png'}</span>
+              <span>.{exportFormat === 'jpeg' ? 'jpg' : exportFormat}</span>
             </span>
           </label>
           <label>
             Định dạng
             <select
               value={exportFormat}
-              disabled={exportBusy}
+              disabled={exportBusy || exportSupport === null}
               onChange={(event) => {
                 setExportFormat(event.currentTarget.value as ExportFormat);
                 clearDownload();
               }}
             >
-              <option value="png">PNG</option>
-              <option value="jpeg">JPG</option>
+              <option value="png" disabled={exportSupport !== null && !exportSupport.png}>PNG{exportSupport && !exportSupport.png ? ' (không hỗ trợ)' : ''}</option>
+              <option value="jpeg" disabled={exportSupport !== null && !exportSupport.jpeg}>JPG{exportSupport && !exportSupport.jpeg ? ' (không hỗ trợ)' : ''}</option>
+              <option value="webp" disabled={exportSupport !== null && !exportSupport.webp}>WebP{exportSupport && !exportSupport.webp ? ' (không hỗ trợ)' : ''}</option>
             </select>
           </label>
+          {exportSupport && !Object.values(exportSupport).some(Boolean) && (
+            <p className="export-error" role="alert">Trình duyệt không hỗ trợ xuất PNG, JPG hoặc WebP.</p>
+          )}
+          {exportFormat !== 'png' && (
+            <label>
+              Chất lượng {exportFormat === 'jpeg' ? 'JPG' : 'WebP'}: {exportQuality}
+              <input
+                type="range"
+                min="1"
+                max="100"
+                value={exportQuality}
+                disabled={exportBusy}
+                onChange={(event) => {
+                  setExportQuality(Number(event.currentTarget.value));
+                  clearDownload();
+                }}
+              />
+            </label>
+          )}
           {exportFormat === 'jpeg' && (
-            <>
-              <label>
-                Chất lượng JPG: {exportQuality}
-                <input
-                  type="range"
-                  min="1"
-                  max="100"
-                  value={exportQuality}
-                  disabled={exportBusy}
-                  onChange={(event) => {
-                    setExportQuality(Number(event.currentTarget.value));
-                    clearDownload();
-                  }}
-                />
-              </label>
               <label className="export-color-field">
                 Nền JPG
                 <input
@@ -1897,14 +1929,13 @@ function EditorPage({
                   }}
                 />
               </label>
-            </>
           )}
           <p className="export-resolution">Kích thước: {snapshot.document.width} × {snapshot.document.height} px</p>
-          <button className="button button-primary" type="submit" disabled={exportBusy}>
+          <button className="button button-primary" type="submit" disabled={exportBusy || exportSupport === null || !Object.values(exportSupport).some(Boolean)}>
             {exportBusy ? 'Đang tạo file…' : 'Tạo file'}
           </button>
         </form>
-        {exportBusy && <p className="export-status" role="status" aria-live="polite">Đang render ảnh ở kích thước tài liệu…</p>}
+        {exportBusy && <p className="export-status" role="status" aria-live="polite">Đang render ảnh ở kích thước tài liệu… Có thể đóng hộp thoại; kết quả sẽ bị bỏ khi hoàn tất.</p>}
         {!hasVisibleContent && (
           <p className="export-empty-warning" role="status">
             Tài liệu hiện không có nội dung hiển thị. PNG sẽ trong suốt; JPG dùng màu nền đã chọn.
@@ -1913,7 +1944,8 @@ function EditorPage({
         {exportError && <p className="export-error" role="alert">{exportError}</p>}
         {downloadUrl && (
           <div className="export-ready" role="status">
-            <span>File đã sẵn sàng ({exportBytes.toLocaleString('vi-VN')} byte)</span>
+            <img className="export-preview" src={downloadUrl} alt="Xem trước file ảnh đã tạo" />
+            <span>File đã sẵn sàng ({exportBytes.toLocaleString('vi-VN')} byte). Bấm liên kết để tải xuống.</span>
             <a className="button button-primary" href={downloadUrl} download={exportFilename(exportNameBase, exportFormat)}>
               Tải ảnh xuống
             </a>
