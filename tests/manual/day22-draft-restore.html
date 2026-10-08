@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Day 22 — khôi phục bản nháp</title>
+    <link rel="stylesheet" href="/src/app.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Day 22 — khôi phục và recovery draft</h1>
+      <p>Chỉ chạy trên origin cô lập <code>http://127.0.0.1:5176</code>. Harness tạo và xóa draft thử nghiệm trong IndexedDB của origin này.</p>
+      <button id="run" type="button">Chạy kiểm tra Day 22</button>
+      <button id="seed-source-only" type="button">Tạo mẫu snapshot không hỗ trợ cho UI</button>
+      <button id="seed-missing-asset" type="button">Tạo mẫu thiếu asset cho UI</button>
+      <pre id="results" role="status" aria-live="polite">Chưa chạy kiểm tra.</pre>
+      <h2>Smoke test trong ứng dụng</h2>
+      <ol>
+        <li>Mở <code>/</code>, nhập ảnh, chỉnh sửa và chờ trạng thái SAVED.</li>
+        <li>Tải lại trang: Home hiện thumbnail/kích thước/thời điểm; chọn “Tiếp tục chỉnh”.</li>
+        <li>Tải lại lần nữa rồi chọn “Bỏ bản nháp”; xác nhận, sau đó kiểm tra thẻ draft biến mất.</li>
+        <li>Thử hủy xác nhận thay ảnh và hủy mở ảnh nguồn; draft/asset hiện có phải vẫn nguyên.</li>
+        <li>Mở trực tiếp <code>/editor</code>: có draft thì hiện lựa chọn Home; không có draft thì trở về Home.</li>
+      </ol>
+    </main>
+    <script type="module" src="./day22-draft-restore.ts"></script>
+  </body>
+</html>

@@ -262,6 +262,24 @@ export async function decodeWithFabricUrl(
   }
 }
 
+export async function decodeSavedImageAsset(
+  asset: { id: string; blob: Blob; mimeType: ImageFileMetadata['mimeType']; width: number; height: number; originalFileName: string; importedAt: number },
+  signal?: AbortSignal,
+): Promise<ImageImportCandidate> {
+  const file = new File([asset.blob], asset.originalFileName, { type: asset.mimeType, lastModified: asset.importedAt });
+  const metadata = await validateImageFile(file, signal);
+  if (metadata.mimeType !== asset.mimeType) throw new ImageImportError('UNSUPPORTED_FORMAT');
+  const decoded = await decodeWithFabricUrl(file, signal);
+  if (decoded.width !== asset.width || decoded.height !== asset.height) {
+    decoded.dispose();
+    throw new ImageImportError('DECODE_FAILED');
+  }
+  decoded.assetId = asset.id;
+  decoded.importedAt = asset.importedAt;
+  decoded.mimeType = asset.mimeType;
+  return decoded;
+}
+
 export async function decodeWithImageBitmap(
   file: File,
   signal?: AbortSignal,

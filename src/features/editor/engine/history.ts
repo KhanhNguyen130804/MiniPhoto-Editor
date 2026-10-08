@@ -55,9 +55,10 @@ function createState<T>(entries: HistoryEntry[], index: number, revision: number
   });
 }
 
-export function createHistory<T>(baseline: T): HistoryState<T> {
+export function createHistory<T>(baseline: T, initialRevision = 0): HistoryState<T> {
+  if (!Number.isSafeInteger(initialRevision) || initialRevision < 0) throw new RangeError('History revision must be a non-negative safe integer.');
   const entry = encode(baseline);
-  return createState([entry], 0, 0, entry.bytes);
+  return createState([entry], 0, initialRevision, entry.bytes);
 }
 
 export function currentSnapshot<T>(history: HistoryState<T>): T {

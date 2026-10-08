@@ -15,6 +15,7 @@ import {
 } from './features/editor/engine/history';
 import {
   decodeWithFabricUrl,
+  decodeSavedImageAsset,
   ImageImportError,
   MAX_IMAGE_EDGE,
   MAX_IMAGE_PIXELS,
@@ -22,7 +23,7 @@ import {
   type ImageImportCandidate,
 } from './features/editor/engine/imageImport';
 import { createImageBaselineSnapshot, MAX_TEXT_CODE_POINTS, normalizeTextContent, type EditorSnapshot, type PresetId } from './features/editor/engine/snapshot';
-import { ensureTextFontReady, validateTextPropertiesPatch, type TextProperties, type TextPropertiesPatch } from './features/editor/engine/text';
+import { ensureSnapshotTextFonts, ensureTextFontReady, validateTextPropertiesPatch, type TextProperties, type TextPropertiesPatch } from './features/editor/engine/text';
 import { DEFAULT_SHAPE_COLOR, validateShapePropertiesPatch, type SelectedShape, type ShapeKind, type ShapePropertiesPatch } from './features/editor/engine/shapes';
 import {
   cropDocument as cropEditorDocument,
@@ -34,7 +35,7 @@ import { calculateResize, type ResizeAxis, type ResizeDimensions, type ResizeErr
 import { exportImage, type ExportFormat } from './features/editor/engine/exportImage';
 import { selectImagePreset, type ImageAdjustments } from './features/editor/engine/adjustmentFilters';
 import { createDraftAutosave, type DraftAutosaveController, type DraftSaveStatus } from './features/editor/engine/draftAutosave';
-import { saveCurrentDraft } from './features/editor/engine/draftStore';
+import { deleteCurrentDraft, inspectCurrentDraft, saveCurrentDraft, type CurrentDraftInspection, type SavedCurrentDraft } from './features/editor/engine/draftStore';
 import {
   createCropRect,
   CROP_RATIOS,
@@ -61,6 +62,8 @@ type PendingResize = {
   applyError: string | null;
 };
 type AdjustmentField = keyof ImageAdjustments;
+type DraftViewState = CurrentDraftInspection | { kind: 'checking' } | { kind: 'error'; reason: string };
+type DraftConfirmation = 'replace' | 'discard' | 'source-only' | null;
 
 const ADJUSTMENT_FIELDS: readonly AdjustmentField[] = ['brightness', 'contrast', 'saturation'];
 const ADJUSTMENT_LABELS: Record<AdjustmentField, string> = {
@@ -177,7 +180,7 @@ function HelpDialogTrigger({ dark = false }: { dark?: boolean }) {
         <p className="eyebrow">MINIPHOTO EDITOR</p>
         <h2 id="help-dialog-title">Bắt đầu thật đơn giản</h2>
         <p id="help-dialog-copy">
-          Bạn có thể mở ảnh JPG, PNG hoặc WebP tĩnh, cắt, đổi kích thước, xoay/lật, chọn bộ lọc, tinh chỉnh màu, thêm chú thích tiếng Việt, tạo hình khối và tải ảnh xuống. Bản nháp tự động lưu trên thiết bị; khôi phục sau khi tải lại sẽ được bổ sung sau.
+          Bạn có thể mở ảnh JPG, PNG hoặc WebP tĩnh, cắt, đổi kích thước, xoay/lật, chọn bộ lọc, tinh chỉnh màu, thêm chú thích tiếng Việt, tạo hình khối và tải ảnh xuống. Bản nháp được lưu trên thiết bị; khi mở lại, bạn có thể chọn tiếp tục hoặc bỏ bản nháp.
         </p>
         <div className="dialog-note">
           <strong>Cần trợ giúp ngay?</strong>
@@ -219,6 +222,7 @@ function HomeImportState({
   fileName,
   onChoose,
   buttonRef,
+  disabled = false,
 }: {
   state: PreviewState;
   status: ImportStatus;
@@ -226,6 +230,7 @@ function HomeImportState({
   fileName?: string;
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   buttonRef: RefObject<HTMLButtonElement | null>;
+  disabled?: boolean;
 }) {
   if (status.phase === 'loading' || state === 'loading') {
     return (
@@ -246,7 +251,7 @@ function HomeImportState({
           {status.phase === 'error' ? status.message : 'Hãy thử JPG, PNG hoặc WebP tĩnh.'}
           {hasDocument && ' Ảnh hiện tại vẫn được giữ.'}
         </span>
-        <button className="text-action" type="button" onClick={onChoose}>Chọn ảnh khác</button>
+        <button className="text-action" type="button" onClick={onChoose} disabled={disabled}>Chọn ảnh khác</button>
       </div>
     );
   }
@@ -257,11 +262,84 @@ function HomeImportState({
       <strong>{hasDocument ? 'Ảnh hiện tại vẫn được giữ trong phiên này' : 'Kéo ảnh vào đây'}</strong>
       {hasDocument && fileName && <span className="import-current-name" title={fileName}>{fileName}</span>}
       <span className="import-or">hoặc</span>
-      <button className="button button-primary" type="button" onClick={onChoose} ref={buttonRef}>
+      <button className="button button-primary" type="button" onClick={onChoose} ref={buttonRef} disabled={disabled}>
         {hasDocument ? 'Thay ảnh' : 'Chọn ảnh'}
       </button>
       <span className="format-hint">JPG · PNG · WebP tĩnh</span>
     </div>
+  );
+}
+
+function DraftCard({
+  state,
+  busy,
+  onResume,
+  onSourceOnly,
+  onDiscard,
+  onRetry,
+}: {
+  state: DraftViewState;
+  busy: boolean;
+  onResume: () => void;
+  onSourceOnly: (event: MouseEvent<HTMLButtonElement>) => void;
+  onDiscard: (event: MouseEvent<HTMLButtonElement>) => void;
+  onRetry: () => void;
+}) {
+  const saved = state.kind === 'ready' || state.kind === 'source-only' ? state.saved : null;
+  const thumbnail = saved?.draft.thumbnail instanceof Blob ? saved.draft.thumbnail : null;
+  const [thumbnailUrl, setThumbnailUrl] = useState<string | null>(null);
+  const [thumbnailUnavailable, setThumbnailUnavailable] = useState(false);
+
+  useEffect(() => {
+    if (!thumbnail || !thumbnail.size) {
+      setThumbnailUrl(null);
+      setThumbnailUnavailable(false);
+      return;
+    }
+    const url = URL.createObjectURL(thumbnail);
+    setThumbnailUrl(url);
+    setThumbnailUnavailable(false);
+    return () => URL.revokeObjectURL(url);
+  }, [thumbnail]);
+
+  if (state.kind === 'none') return null;
+  if (state.kind === 'checking') {
+    return <section className="draft-card draft-card--checking" role="status" aria-live="polite">Đang kiểm tra bản nháp đã lưu trên thiết bị…</section>;
+  }
+  if (state.kind === 'error') {
+    return (
+      <section className="draft-card draft-card--warning" aria-labelledby="draft-error-title">
+        <div><p className="eyebrow">BẢN NHÁP</p><h2 id="draft-error-title">Chưa kiểm tra được dữ liệu đã lưu</h2><p>{state.reason}</p></div>
+        <button className="button button-secondary" type="button" onClick={onRetry}>Thử lại</button>
+      </section>
+    );
+  }
+
+  const recoverable = state.kind === 'ready' || state.kind === 'source-only';
+  const title = state.kind === 'ready' ? 'Có bản nháp đã lưu' : state.kind === 'source-only' ? 'Bản nháp cần khôi phục ảnh nguồn' : 'Không thể khôi phục bản nháp';
+  const dimensions = state.kind === 'ready' ? state.saved.draft.snapshot.document : saved?.asset;
+  const updatedAt = saved && Number.isSafeInteger(saved.draft.updatedAt) && Number.isFinite(new Date(saved.draft.updatedAt).getTime())
+    ? new Intl.DateTimeFormat('vi-VN', { dateStyle: 'medium', timeStyle: 'short' }).format(saved.draft.updatedAt)
+    : 'Không rõ thời điểm lưu';
+
+  return (
+    <section className={`draft-card${recoverable ? '' : ' draft-card--warning'}`} aria-labelledby="saved-draft-title">
+      {saved && thumbnailUrl && !thumbnailUnavailable ? <img className="draft-card__thumbnail" src={thumbnailUrl} alt="Ảnh thu nhỏ của bản nháp" onError={() => setThumbnailUnavailable(true)} />
+        : <span className="draft-card__placeholder" aria-hidden="true">◈</span>}
+      <div className="draft-card__details">
+        <p className="eyebrow">BẢN NHÁP TRÊN THIẾT BỊ</p>
+        <h2 id="saved-draft-title">{title}</h2>
+        {saved && dimensions && <p className="draft-card__meta">{saved.asset.originalFileName} · {dimensions.width} × {dimensions.height} px · {updatedAt}</p>}
+        {state.kind === 'source-only' && <p className="draft-card__warning" role="status">{state.reason} Các chỉnh sửa sẽ không được khôi phục nếu mở ảnh nguồn.</p>}
+        {state.kind === 'unrecoverable' && <p className="draft-card__warning" role="alert">{state.reason} Bản nháp được giữ lại cho tới khi bạn xác nhận bỏ.</p>}
+        {busy && <p className="draft-card__warning" role="status" aria-live="polite">Đang xác minh ảnh và mở bản nháp…</p>}
+        <div className="draft-card__actions">
+          {state.kind === 'ready' && <button className="button button-primary" type="button" onClick={onResume} disabled={busy}>Tiếp tục chỉnh</button>}
+          {state.kind === 'source-only' && <button className="button button-primary" type="button" onClick={onSourceOnly} disabled={busy}>Mở lại ảnh nguồn</button>}
+          <button className="button button-secondary" type="button" onClick={onDiscard} disabled={busy}>Bỏ bản nháp</button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -270,15 +348,29 @@ function HomePage({
   status,
   hasDocument,
   fileName,
+  draft,
+  draftBusy,
+  canImport,
   onChoose,
   onImportFiles,
+  onResumeDraft,
+  onOpenSource,
+  onDiscardDraft,
+  onRetryDraft,
 }: {
   state: PreviewState;
   status: ImportStatus;
   hasDocument: boolean;
   fileName?: string;
+  draft: DraftViewState;
+  draftBusy: boolean;
+  canImport: boolean;
   onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
   onImportFiles: (files: File[], focusTarget: HTMLButtonElement | null) => void;
+  onResumeDraft: () => void;
+  onOpenSource: (event: MouseEvent<HTMLButtonElement>) => void;
+  onDiscardDraft: (event: MouseEvent<HTMLButtonElement>) => void;
+  onRetryDraft: () => void;
 }) {
   const [dragOver, setDragOver] = useState(false);
   const chooseButtonRef = useRef<HTMLButtonElement>(null);
@@ -287,6 +379,7 @@ function HomePage({
     <div className="home-page">
       <HomeHeader />
       <main className="home-main">
+        <DraftCard state={draft} busy={draftBusy} onResume={onResumeDraft} onSourceOnly={onOpenSource} onDiscard={onDiscardDraft} onRetry={onRetryDraft} />
         <section className="home-hero" aria-labelledby="home-title">
           <div className="hero-copy">
             <p className="eyebrow"><span className="eyebrow-dot" /> BỘ CÔNG CỤ ẢNH GỌN NHẸ</p>
@@ -298,7 +391,7 @@ function HomePage({
               <li><span aria-hidden="true">✓</span> Xoay &amp; lật</li>
               <li><span aria-hidden="true">✓</span> Bộ lọc, chữ &amp; hình khối</li>
             </ul>
-            <p className="build-note">Ảnh được đọc trong trình duyệt. Bản nháp tự động lưu trên thiết bị trong khi chỉnh sửa; luồng khôi phục sau khi tải lại sẽ được bổ sung sau.</p>
+            <p className="build-note">Ảnh được đọc trong trình duyệt. Bản nháp tự động lưu trên thiết bị; khi mở lại, bạn có thể chọn tiếp tục hoặc bỏ bản nháp.</p>
           </div>
 
           <section className={`import-card${state === 'error' || status.phase === 'error' ? ' import-card--error' : ''}`} aria-labelledby="import-title">
@@ -312,7 +405,7 @@ function HomePage({
             <div
               className={`import-dropzone${dragOver ? ' import-dropzone--active' : ''}`}
               onDragOver={(event) => {
-                if (!Array.from(event.dataTransfer.types).includes('Files')) return;
+                if (!canImport || !Array.from(event.dataTransfer.types).includes('Files')) return;
                 event.preventDefault();
                 setDragOver(true);
               }}
@@ -322,7 +415,7 @@ function HomePage({
               onDrop={(event) => {
                 event.preventDefault();
                 setDragOver(false);
-                onImportFiles(Array.from(event.dataTransfer.files), chooseButtonRef.current);
+                if (canImport) onImportFiles(Array.from(event.dataTransfer.files), chooseButtonRef.current);
               }}
             >
               <HomeImportState
@@ -332,6 +425,7 @@ function HomePage({
                 fileName={fileName}
                 onChoose={onChoose}
                 buttonRef={chooseButtonRef}
+                disabled={!canImport}
               />
             </div>
             <div className="import-card__footer">
@@ -1806,7 +1900,7 @@ function PrivacyPage() {
 
         <section className="content-card" aria-labelledby="privacy-now-title">
           <h2 id="privacy-now-title">Hiện trạng bản dựng</h2>
-          <p>Ảnh được đọc, giải mã và xuất ngay trong trình duyệt trên thiết bị; bản dựng không tải ảnh hay bản nháp lên máy chủ. Ứng dụng tự động lưu source ảnh, snapshot chỉnh sửa và thumbnail trong IndexedDB của trình duyệt này. Giao diện khôi phục bản nháp sau khi tải lại chưa được triển khai.</p>
+          <p>Ảnh được đọc, giải mã và xuất ngay trong trình duyệt trên thiết bị; bản dựng không tải ảnh hay bản nháp lên máy chủ. Ứng dụng tự động lưu source ảnh, snapshot chỉnh sửa và thumbnail trong IndexedDB của trình duyệt này. Khi mở lại, bạn có thể chọn tiếp tục chỉnh sửa, mở ảnh nguồn trong trường hợp snapshot không dùng được, hoặc xác nhận bỏ bản nháp.</p>
         </section>
         <section className="content-card" aria-labelledby="privacy-later-title">
           <h2 id="privacy-later-title">Giới hạn bản nháp</h2>
@@ -1837,6 +1931,11 @@ export default function App() {
   const [pendingCandidate, setPendingCandidate] = useState<ImageImportCandidate | null>(null);
   const [importStatus, setImportStatus] = useState<ImportStatus>(idleImportStatus);
   const [draftSaveStatus, setDraftSaveStatus] = useState<DraftSaveStatus>('NOT_SAVED');
+  const [draftInspection, setDraftInspection] = useState<DraftViewState>({ kind: 'checking' });
+  const [draftBusy, setDraftBusy] = useState(false);
+  const [confirmation, setConfirmation] = useState<DraftConfirmation>(null);
+  const [confirmationBusy, setConfirmationBusy] = useState(false);
+  const [confirmationError, setConfirmationError] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const editorReplaceButtonRef = useRef<HTMLButtonElement>(null);
@@ -1844,9 +1943,12 @@ export default function App() {
   const pendingCandidateRef = useRef<ImageImportCandidate | null>(null);
   const importControllerRef = useRef<AbortController | null>(null);
   const importGenerationRef = useRef(0);
+  const restoreControllerRef = useRef<AbortController | null>(null);
+  const restoreGenerationRef = useRef(0);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const detachImageRef = useRef<((image: FabricImage) => void) | null>(null);
   const draftAutosaveRef = useRef<DraftAutosaveController<DraftSaveRequest> | null>(null);
+  const skipNextAutosaveRef = useRef(false);
   const routeRef = useRef(route);
   routeRef.current = route;
   const editorSnapshot = useMemo(
@@ -1887,26 +1989,44 @@ export default function App() {
     setImportStatus(idleImportStatus);
   };
 
+  const cancelInFlightRestore = () => {
+    const controller = restoreControllerRef.current;
+    if (!controller) return;
+    restoreControllerRef.current = null;
+    restoreGenerationRef.current += 1;
+    controller.abort();
+    setDraftBusy(false);
+  };
+
   const focusAfterDialog = () => {
     const target = returnFocusRef.current;
     if (target?.isConnected) target.focus();
+    else document.querySelector<HTMLButtonElement>('.import-empty .button-primary')?.focus();
     returnFocusRef.current = null;
   };
 
   const cancelPendingReplacement = () => {
     const pending = pendingCandidateRef.current;
-    if (!pending) return;
     pendingCandidateRef.current = null;
-    pending.dispose();
+    pending?.dispose();
     setPendingCandidate(null);
+    setConfirmation(null);
+    setConfirmationError('');
     if (dialogRef.current?.open) dialogRef.current.close();
     focusAfterDialog();
   };
 
-  const activateCandidate = (next: ImageImportCandidate) => {
+  const activateCandidate = (
+    next: ImageImportCandidate,
+    restored?: { snapshot: EditorSnapshot; revision: number; saved: boolean },
+  ) => {
     draftAutosaveRef.current?.cancel();
-    setDraftSaveStatus('DIRTY');
-    const nextHistory = createHistory(createImageBaselineSnapshot(next.assetId, next.width, next.height));
+    skipNextAutosaveRef.current = restored?.saved ?? false;
+    setDraftSaveStatus(restored?.saved ? 'SAVED' : 'DIRTY');
+    const nextHistory = createHistory(
+      restored?.snapshot ?? createImageBaselineSnapshot(next.assetId, next.width, next.height),
+      restored?.revision ?? 0,
+    );
     const previous = activeCandidateRef.current;
     if (previous && previous !== next) {
       detachImageRef.current?.(previous.image);
@@ -1919,7 +2039,7 @@ export default function App() {
 
   const importFiles = async (files: File[], focusTarget?: HTMLElement | null) => {
     if (focusTarget) returnFocusRef.current = focusTarget;
-    if (importControllerRef.current || pendingCandidateRef.current) return;
+    if (importControllerRef.current || pendingCandidateRef.current || draftInspection.kind === 'checking' || draftInspection.kind === 'error') return;
     if (!files.length) return;
     if (files.length !== 1) {
       setImportStatus({ phase: 'error', message: 'Vui lòng chọn hoặc thả đúng một ảnh mỗi lần.' });
@@ -1948,9 +2068,12 @@ export default function App() {
       }
 
       const next = decoded;
-      if (activeCandidateRef.current) {
+      const savedDraftExists = ['ready', 'source-only', 'unrecoverable'].includes(draftInspection.kind);
+      if (activeCandidateRef.current || savedDraftExists) {
         pendingCandidateRef.current = next;
         setPendingCandidate(next);
+        setConfirmation('replace');
+        setConfirmationError('');
         decoded = undefined;
       } else {
         activateCandidate(next);
@@ -1968,7 +2091,7 @@ export default function App() {
   };
 
   const openFilePicker = (event: MouseEvent<HTMLButtonElement>) => {
-    if (importControllerRef.current || pendingCandidateRef.current) return;
+    if (importControllerRef.current || pendingCandidateRef.current || draftInspection.kind === 'checking' || draftInspection.kind === 'error') return;
     returnFocusRef.current = event.currentTarget;
     setImportStatus(idleImportStatus);
     fileInputRef.current?.click();
@@ -1979,6 +2102,8 @@ export default function App() {
     if (!next) return;
     pendingCandidateRef.current = null;
     setPendingCandidate(null);
+    setConfirmation(null);
+    setConfirmationError('');
     activateCandidate(next);
     setImportStatus(idleImportStatus);
     if (routeRef.current !== 'editor') navigateTo('/editor');
@@ -1986,9 +2111,105 @@ export default function App() {
     focusAfterDialog();
   };
 
+  const refreshDraftInspection = async () => {
+    setDraftInspection({ kind: 'checking' });
+    try {
+      setDraftInspection(await inspectCurrentDraft());
+    } catch (error) {
+      setDraftInspection({ kind: 'error', reason: error instanceof Error ? error.message : 'Không đọc được bản nháp đã lưu.' });
+    }
+  };
+
+  const restoreSavedDraft = async (useSnapshot: boolean) => {
+    if ((draftInspection.kind !== 'ready' && draftInspection.kind !== 'source-only') || restoreControllerRef.current) return false;
+    const saved: SavedCurrentDraft = draftInspection.saved;
+    const controller = new AbortController();
+    const generation = ++restoreGenerationRef.current;
+    restoreControllerRef.current = controller;
+    setDraftBusy(true);
+    let restored: ImageImportCandidate | undefined;
+    try {
+      restored = await decodeSavedImageAsset(saved.asset, controller.signal);
+      if (controller.signal.aborted || generation !== restoreGenerationRef.current) return false;
+      let snapshot: EditorSnapshot;
+      if (useSnapshot) {
+        snapshot = saved.draft.snapshot;
+        await ensureSnapshotTextFonts(snapshot);
+      } else {
+        snapshot = createImageBaselineSnapshot(restored.assetId, restored.width, restored.height);
+      }
+      if (controller.signal.aborted || generation !== restoreGenerationRef.current) return false;
+      const revision = Number.isSafeInteger(saved.draft.revision) && saved.draft.revision >= 0 ? saved.draft.revision : 0;
+      activateCandidate(restored, { snapshot, revision, saved: useSnapshot });
+      restored = undefined;
+      setImportStatus(idleImportStatus);
+      navigateTo('/editor');
+      if (confirmation) {
+        setConfirmation(null);
+        setConfirmationError('');
+        if (dialogRef.current?.open) dialogRef.current.close();
+        focusAfterDialog();
+      }
+      return true;
+    } catch (error) {
+      restored?.dispose();
+      restored = undefined;
+      if (controller.signal.aborted || generation !== restoreGenerationRef.current) return false;
+      const reason = error instanceof Error ? error.message : 'Không thể khôi phục bản nháp.';
+      if (error instanceof ImageImportError) {
+        setDraftInspection({ kind: 'unrecoverable', assetId: saved.asset.id, reason: `Không thể đọc ảnh nguồn: ${reason}` });
+      } else {
+        setDraftInspection({ kind: 'source-only', saved, reason: `Không thể khôi phục các chỉnh sửa: ${reason}` });
+      }
+      if (confirmation) setConfirmationError(reason);
+      return false;
+    } finally {
+      restored?.dispose();
+      if (restoreControllerRef.current === controller) {
+        restoreControllerRef.current = null;
+        setDraftBusy(false);
+      }
+    }
+  };
+
+  const resumeSavedDraft = () => { void restoreSavedDraft(true); };
+  const askOpenSource = (event: MouseEvent<HTMLButtonElement>) => {
+    returnFocusRef.current = event.currentTarget;
+    setConfirmationError('');
+    setConfirmation('source-only');
+  };
+  const askDiscardDraft = (event: MouseEvent<HTMLButtonElement>) => {
+    returnFocusRef.current = event.currentTarget;
+    setConfirmationError('');
+    setConfirmation('discard');
+  };
+  const confirmDiscardDraft = async () => {
+    setConfirmationBusy(true);
+    setConfirmationError('');
+    try {
+      await deleteCurrentDraft();
+      setDraftInspection({ kind: 'none' });
+      setConfirmation(null);
+      returnFocusRef.current = null;
+      if (dialogRef.current?.open) dialogRef.current.close();
+      focusAfterDialog();
+    } catch (error) {
+      setConfirmationError(error instanceof Error ? error.message : 'Không thể bỏ bản nháp.');
+    } finally {
+      setConfirmationBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    void refreshDraftInspection();
+  }, []);
+
   useEffect(() => {
     const autosave = createDraftAutosave<DraftSaveRequest>(
-      ({ candidate: currentCandidate, snapshot, revision }) => saveCurrentDraft(currentCandidate, snapshot, revision),
+      async ({ candidate: currentCandidate, snapshot, revision }) => {
+        await saveCurrentDraft(currentCandidate, snapshot, revision);
+        if (activeCandidateRef.current === currentCandidate) setDraftInspection({ kind: 'none' });
+      },
       setDraftSaveStatus,
     );
     draftAutosaveRef.current = autosave;
@@ -2009,15 +2230,19 @@ export default function App() {
       setDraftSaveStatus('NOT_SAVED');
       return;
     }
+    if (skipNextAutosaveRef.current) {
+      skipNextAutosaveRef.current = false;
+      return;
+    }
     draftAutosaveRef.current?.schedule({ candidate, snapshot: editorSnapshot, revision: editorHistory.revision });
   }, [candidate, editorHistory, editorSnapshot]);
 
   useEffect(() => {
-    if (route === 'editor' && !candidate) {
+    if (route === 'editor' && !candidate && draftInspection.kind === 'none') {
       window.history.replaceState({}, '', '/');
       setRoute('home');
     }
-  }, [route, candidate]);
+  }, [route, candidate, draftInspection]);
 
   const displayRoute = route === 'editor' && !candidate ? 'home' : route;
 
@@ -2027,9 +2252,9 @@ export default function App() {
 
   useEffect(() => {
     const dialog = dialogRef.current;
-    if (pendingCandidate && dialog && !dialog.open) dialog.showModal();
-    if (!pendingCandidate && dialog?.open) dialog.close();
-  }, [pendingCandidate]);
+    if (confirmation && dialog && !dialog.open) dialog.showModal();
+    if (!confirmation && dialog?.open) dialog.close();
+  }, [confirmation]);
 
   useEffect(() => {
     const onClick = (event: globalThis.MouseEvent) => {
@@ -2043,6 +2268,7 @@ export default function App() {
       const destination = `${url.pathname}${url.search}`;
       if (destination === `${window.location.pathname}${window.location.search}`) return;
       cancelInFlightImport();
+      cancelInFlightRestore();
       cancelPendingReplacement();
       document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach((dialog) => dialog.close());
       window.history.pushState({}, '', destination);
@@ -2050,6 +2276,7 @@ export default function App() {
     };
     const onPopState = () => {
       cancelInFlightImport();
+      cancelInFlightRestore();
       cancelPendingReplacement();
       document.querySelectorAll<HTMLDialogElement>('dialog[open]').forEach((dialog) => dialog.close());
       setRoute(currentRoute());
@@ -2065,6 +2292,8 @@ export default function App() {
   useEffect(() => () => {
     importGenerationRef.current += 1;
     importControllerRef.current?.abort();
+    restoreGenerationRef.current += 1;
+    restoreControllerRef.current?.abort();
     const pending = pendingCandidateRef.current;
     pendingCandidateRef.current = null;
     pending?.dispose();
@@ -2098,8 +2327,15 @@ export default function App() {
           status={importStatus}
           hasDocument={candidate !== null}
           fileName={candidate?.source.name}
+          draft={candidate ? { kind: 'none' } : draftInspection}
+          draftBusy={draftBusy}
+          canImport={draftInspection.kind !== 'checking' && draftInspection.kind !== 'error' && !draftBusy}
           onChoose={openFilePicker}
           onImportFiles={(files, focusTarget) => { void importFiles(files, focusTarget); }}
+          onResumeDraft={resumeSavedDraft}
+          onOpenSource={askOpenSource}
+          onDiscardDraft={askDiscardDraft}
+          onRetryDraft={() => { void refreshDraftInspection(); }}
         />
       )}
       {displayRoute === 'editor' && candidate && editorSnapshot && (
@@ -2150,17 +2386,37 @@ export default function App() {
           cancelPendingReplacement();
         }}
       >
-        <p className="eyebrow">THAY ẢNH</p>
-        <h2 id="replace-dialog-title">Thay ảnh đang mở?</h2>
+        <p className="eyebrow">{confirmation === 'discard' ? 'BỎ BẢN NHÁP' : confirmation === 'source-only' ? 'KHÔI PHỤC ẢNH NGUỒN' : 'THAY ẢNH'}</p>
+        <h2 id="replace-dialog-title">
+          {confirmation === 'discard' ? 'Bỏ bản nháp đã lưu?'
+            : confirmation === 'source-only' ? 'Mở ảnh nguồn, bỏ các chỉnh sửa?'
+              : candidate ? 'Thay ảnh đang mở?' : 'Thay bản nháp đã lưu?'}
+        </h2>
         <p id="replace-dialog-copy">
-          Ảnh hiện tại “{candidate?.source.name}” sẽ được thay bằng “{pendingCandidate?.source.name}”.
+          {confirmation === 'discard'
+            ? 'Ảnh nguồn và snapshot chỉnh sửa sẽ bị xóa khỏi bộ nhớ cục bộ của ứng dụng.'
+            : confirmation === 'source-only'
+              ? 'Ảnh nguồn sẽ được mở với trạng thái ban đầu. Các chỉnh sửa không thể khôi phục; bản nháp cũ được giữ cho tới khi trạng thái mới lưu thành công.'
+              : candidate
+                ? `Ảnh hiện tại “${candidate.source.name}” sẽ được thay bằng “${pendingCandidate?.source.name}”.`
+                : `Ảnh mới “${pendingCandidate?.source.name}” sẽ thay bản nháp “${draftInspection.kind === 'ready' || draftInspection.kind === 'source-only' ? draftInspection.saved.asset.originalFileName : 'không thể khôi phục'}”. Bản nháp cũ chỉ bị thay khi trạng thái mới lưu thành công.`}
         </p>
+        {confirmationError && <p className="replace-dialog__error" role="alert">{confirmationError}</p>}
         <div className="replace-dialog__actions">
-          <button className="button button-secondary" type="button" onClick={cancelPendingReplacement} autoFocus>
-            Giữ ảnh hiện tại
+          <button className="button button-secondary" type="button" onClick={cancelPendingReplacement} autoFocus disabled={confirmationBusy || draftBusy}>
+            {confirmation === 'replace' && candidate ? 'Giữ ảnh hiện tại' : 'Giữ bản nháp'}
           </button>
-          <button className="button button-primary" type="button" onClick={confirmReplacement}>
-            Thay ảnh
+          <button
+            className="button button-primary"
+            type="button"
+            disabled={confirmationBusy || draftBusy}
+            onClick={() => {
+              if (confirmation === 'replace') confirmReplacement();
+              else if (confirmation === 'discard') void confirmDiscardDraft();
+              else if (confirmation === 'source-only') void restoreSavedDraft(false);
+            }}
+          >
+            {confirmation === 'replace' ? 'Thay ảnh' : confirmation === 'discard' ? 'Bỏ bản nháp' : 'Mở ảnh nguồn'}
           </button>
         </div>
       </dialog>
