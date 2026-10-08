@@ -18,6 +18,7 @@ export const DEFAULT_TEXT_FILL = '#111827';
 
 const TEXT_FONT_SAMPLE = 'Tiếng Việt: Ắ ễ đ ộ a\u0301';
 const TEXT_FONT_FAMILIES = new Set<string>([DEFAULT_TEXT_FONT_FAMILY, 'Noto Serif']);
+let textFontRetryId = 0;
 
 export type TextProperties = {
   x: number;
@@ -35,15 +36,45 @@ export type TextProperties = {
 
 export type TextPropertiesPatch = Partial<TextProperties>;
 
+function reloadTextFontFaces(fontFamily: string, style: string, weight: number): void {
+  const retryId = ++textFontRetryId;
+  let matches = 0;
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules: CSSRuleList;
+    try { rules = sheet.cssRules; } catch { continue; }
+    for (let index = 0; index < rules.length; index += 1) {
+      const rule = rules[index];
+      if (!(rule instanceof CSSFontFaceRule)) continue;
+      const family = rule.style.getPropertyValue('font-family').replace(/^['"]|['"]$/g, '');
+      const ruleStyle = rule.style.getPropertyValue('font-style') || 'normal';
+      const weightRange = (rule.style.getPropertyValue('font-weight') || '400').split(/\s+/).map(Number);
+      if (family !== fontFamily || ruleStyle !== style || weight < weightRange[0]! || weight > (weightRange[1] ?? weightRange[0]!)) continue;
+      const source = rule.style.getPropertyValue('src').replace(/url\(([^)]+)\)/g, (_match, rawUrl: string) => {
+        const unquoted = rawUrl.trim().replace(/^(['"])(.*)\1$/, '$2');
+        const url = new URL(unquoted, document.baseURI);
+        if (url.origin !== location.origin) throw new Error('Font assets must stay on this origin.');
+        url.searchParams.set('fontRetry', String(retryId));
+        return `url("${url.href}")`;
+      });
+      if (source === rule.style.getPropertyValue('src')) continue;
+      rule.style.setProperty('src', source);
+      matches += 1;
+    }
+  }
+  if (matches === 0) throw new Error('Không tìm thấy font cục bộ để thử lại.');
+}
+
 export async function ensureTextFontReady(
   fontFamily = DEFAULT_TEXT_FONT_FAMILY,
   style: 'normal' | 'italic' = 'normal',
   weight: 400 | 700 = 400,
+  retry = false,
 ): Promise<void> {
   if (!TEXT_FONT_FAMILIES.has(fontFamily) || !('fonts' in document)) {
     throw new Error('Không thể tải font chữ tiếng Việt. Hãy thử lại.');
   }
   try {
+    if (retry) reloadTextFontFaces(fontFamily, style, weight);
     const description = `${style} ${weight} 16px "${fontFamily}"`;
     const [vietnameseFaces, sampleFaces] = await Promise.all([
       document.fonts.load(description, 'a\u0301'),

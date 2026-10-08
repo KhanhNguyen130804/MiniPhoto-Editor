@@ -38,7 +38,7 @@ export type EditorCanvasHandle = {
   deleteSelectedText: () => void;
   finishTextEdit: () => boolean;
   beginTextPropertiesEdit: (id: string) => boolean;
-  setTextProperties: (id: string, patch: TextPropertiesPatch) => Promise<boolean>;
+  setTextProperties: (id: string, patch: TextPropertiesPatch, retryFont?: boolean) => Promise<boolean>;
   setTextDraft: (id: string, text: string) => void;
   addShape: (shape: ShapeKind) => void;
   beginShapePropertiesEdit: (id: string) => boolean;
@@ -442,7 +442,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
     return true;
   };
 
-  const setTextProperties = async (id: string, patch: TextPropertiesPatch): Promise<boolean> => {
+  const setTextProperties = async (id: string, patch: TextPropertiesPatch, retryFont = false): Promise<boolean> => {
     const session = textSessionRef.current;
     if (!session || session.id !== id || session.source !== 'properties') return false;
     if (session.pending) return false;
@@ -455,7 +455,7 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       || (patch.fontStyle !== undefined && patch.fontStyle !== object.fontStyle)
       || (patch.fontWeight !== undefined && patch.fontWeight !== object.fontWeight);
     if (fontChanged) {
-      const pending = ensureTextFontReady(fontFamily, fontStyle, fontWeight);
+      const pending = ensureTextFontReady(fontFamily, fontStyle, fontWeight, retryFont);
       session.pending = pending;
       let loadError: unknown;
       try {

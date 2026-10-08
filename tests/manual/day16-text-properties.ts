@@ -101,6 +101,11 @@ async function runAssertions(): Promise<string[]> {
     && Math.abs(textPropertiesFromObject(liveText).width - transformed.document.width * 0.8) < 0.1,
   'Properties must show the effective current-document size after resize.');
   await ensureTextFontReady('Noto Serif', 'italic', 700);
+  await ensureTextFontReady('Noto Serif', 'italic', 700, true);
+  const retriedFontCount = document.fonts.size;
+  await ensureTextFontReady('Noto Serif', 'italic', 700, true);
+  assert(document.fonts.size === retriedFontCount, 'Repeated font retries must replace prior retry faces instead of accumulating them.');
+  lines.push('PASS explicit font retry reloads local Vietnamese and Latin font faces');
   const stylePatch: TextPropertiesPatch = {
     x: -24, y: 61, angle: 37.5, width: 300, fontFamily: 'Noto Serif', fontSize: 36,
     fontWeight: 700, fontStyle: 'italic', textAlign: 'right', fill: '#a21caf', opacity: 0.55,

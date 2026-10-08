@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Day 20 — creative integration</title>
+    <link rel="stylesheet" href="/src/app.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Day 20 — creative integration</h1>
+      <p>Kiểm chuỗi geometry, màu, text, shapes, layers, history và PNG export.</p>
+      <button id="run" type="button">Chạy kiểm tra Day 20</button>
+      <pre id="results" aria-live="polite">Chưa chạy.</pre>
+      <h2>Kiểm tra bổ sung trên ứng dụng</h2>
+      <ol>
+        <li>Nhập nhiều dòng tiếng Việt bằng IME thật; xác nhận dấu và nội dung còn nguyên sau export.</li>
+        <li>Ctrl+Z trong textarea chỉ hoàn tác nội dung đang nhập; Undo của editor vẫn hoạt động sau khi rời trường nhập.</li>
+        <li>Chặn font Noto, xác nhận thêm/xuất text báo lỗi; bỏ chặn font và retry thành công, không đổi font âm thầm.</li>
+        <li>Trong Layers, chọn layer hidden và off-canvas, sửa thuộc tính; visibility không tự bật.</li>
+        <li>Phóng to và export không thêm bước history; kiểm file PNG thực tải xuống về MIME, kích thước và nội dung.</li>
+      </ol>
+    </main>
+    <script type="module" src="./day20-creative-integration.ts"></script>
+  </body>
+</html>

@@ -430,7 +430,7 @@ function EditorPage({
   const [textFontLoading, setTextFontLoading] = useState(false);
   const [textPropertyInputs, setTextPropertyInputs] = useState<Partial<Record<TextNumericField, string>>>({});
   const textPropertyErrorRef = useRef('');
-  const textFontRetryRef = useRef<TextPropertiesPatch | null>(null);
+  const textFontRetryRef = useRef<TextPropertiesPatch | 'add' | null>(null);
   const [adjustmentPreview, setAdjustmentPreview] = useState<ImageAdjustments | null>(null);
   const [adjustmentOperationActive, setAdjustmentOperationActive] = useState(false);
   const [adjustmentInputs, setAdjustmentInputs] = useState<Partial<Record<AdjustmentField, string>>>({});
@@ -593,20 +593,29 @@ function EditorPage({
     return finished;
   };
 
-  const changeTextProperties = (patch: TextPropertiesPatch) => {
+  const changeTextProperties = (patch: TextPropertiesPatch, retryFont = false) => {
     const selected = selectedText;
     if (!selected || !beginTextPropertyOperation(selected.id)) return;
     const fontChange = patch.fontFamily !== undefined || patch.fontStyle !== undefined || patch.fontWeight !== undefined;
-    textFontRetryRef.current = fontChange ? patch : null;
+    if (!retryFont) textFontRetryRef.current = null;
     setTextFontError('');
     if (fontChange) setTextFontLoading(true);
-    void canvasActionsRef.current?.setTextProperties(selected.id, patch).then((applied) => {
-      if (applied) canvasActionsRef.current?.finishTextEdit();
+    void canvasActionsRef.current?.setTextProperties(selected.id, patch, retryFont).then((applied) => {
+      if (applied) {
+        canvasActionsRef.current?.finishTextEdit();
+        textFontRetryRef.current = null;
+      }
     }).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : 'Không thể áp dụng thuộc tính chữ.';
-      canvasActionsRef.current?.cancelTextEdit();
-      if (fontChange) setTextFontError(`${message} Kiểu chữ cũ vẫn được giữ; hãy thử lại hoặc chọn kiểu khác.`);
-      else setTextError(message);
+      if (fontChange) {
+        canvasActionsRef.current?.finishTextEdit();
+        setSelectedText({ ...selected, isNew: false });
+        textFontRetryRef.current = patch;
+        setTextFontError(`${message} Kiểu chữ cũ vẫn được giữ; hãy thử lại hoặc chọn kiểu khác.`);
+      } else {
+        canvasActionsRef.current?.cancelTextEdit();
+        setTextError(message);
+      }
     }).finally(() => {
       if (fontChange) setTextFontLoading(false);
     });
@@ -635,17 +644,23 @@ function EditorPage({
     });
   };
 
-  const addText = async () => {
+  const addText = async (retryFont = false) => {
     if (cropPending || resizePending || exportBusy || adjustmentOperationActive || status.phase === 'loading') return;
     if (!finishTextEdit()) return;
     setTextError('');
     setTextFontError('');
+    let fontReady = false;
     try {
-      await ensureTextFontReady();
+      await ensureTextFontReady(undefined, undefined, undefined, retryFont || textFontRetryRef.current === 'add');
+      fontReady = true;
       canvasActionsRef.current?.addText();
+      textFontRetryRef.current = null;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Không thể thêm chữ. Hãy thử lại.';
-      if (message.includes('font') || message.includes('Font')) setTextFontError(message);
+      if (!fontReady) {
+        textFontRetryRef.current = 'add';
+        setTextFontError(message);
+      }
       else setTextError(message);
     }
   };
@@ -1530,9 +1545,13 @@ function EditorPage({
               {textFontError && (
                 <div className="text-controls__error" role="alert">
                   {textFontError}
-                  {textFontRetryRef.current && selectedText && (
+                  {textFontRetryRef.current && (
                     <button type="button" disabled={documentActionLocked}
-                      onClick={() => { if (textFontRetryRef.current) changeTextProperties(textFontRetryRef.current); }}>
+                      onClick={() => {
+                        const retry = textFontRetryRef.current;
+                        if (retry === 'add') void addText(true);
+                        else if (retry) changeTextProperties(retry, true);
+                      }}>
                       Thử lại font
                     </button>
                   )}
