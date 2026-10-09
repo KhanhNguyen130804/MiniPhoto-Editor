@@ -63,8 +63,12 @@ public class GallerySavePlugin extends Plugin {
         enqueue(call, "Không thể chuẩn bị lưu ảnh", () -> {
             String filename = safeFilename(call.getString("filename"), call.getString("mimeType"));
             String mimeType = call.getString("mimeType");
-            Long expectedBytes = call.getLong("size");
-            if (expectedBytes == null || expectedBytes <= 0) throw new IOException("Kích thước ảnh không hợp lệ.");
+            Object size = call.getData().opt("size");
+            // Android JSON uses Integer for smaller byte counts; Capacitor getLong accepts only Long.
+            if (!(size instanceof Integer || size instanceof Long) || ((Number) size).longValue() <= 0) {
+                throw new IOException("Kích thước ảnh không hợp lệ.");
+            }
+            long expectedBytes = ((Number) size).longValue();
 
             String saveId = UUID.randomUUID().toString();
             SaveSession session = createSession(saveId, filename, mimeType, expectedBytes);
