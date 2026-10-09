@@ -1,4 +1,5 @@
 import { FabricImage, type ImageSource } from 'fabric';
+import { createUuid } from './uuid';
 
 export const MAX_IMPORT_FILE_BYTES = 20 * 1024 * 1024;
 export const MAX_IMAGE_PIXELS = 12_000_000;
@@ -202,6 +203,8 @@ export async function validateImageFile(file: File, signal?: AbortSignal): Promi
 export type ImageImportCandidate = {
   assetId: string;
   source: File;
+  mimeType?: ImageFileMetadata['mimeType'];
+  importedAt?: number;
   image: FabricImage;
   sourceElement: ImageSource;
   width: number;
@@ -221,8 +224,9 @@ function candidate(source: File, image: FabricImage, release = () => {}): ImageI
   let disposed = false;
 
   return {
-    assetId: crypto.randomUUID(),
+    assetId: createUuid(),
     source,
+    importedAt: Date.now(),
     image,
     sourceElement,
     width,
@@ -257,6 +261,24 @@ export async function decodeWithFabricUrl(
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+export async function decodeSavedImageAsset(
+  asset: { id: string; blob: Blob; mimeType: ImageFileMetadata['mimeType']; width: number; height: number; originalFileName: string; importedAt: number },
+  signal?: AbortSignal,
+): Promise<ImageImportCandidate> {
+  const file = new File([asset.blob], asset.originalFileName, { type: asset.mimeType, lastModified: asset.importedAt });
+  const metadata = await validateImageFile(file, signal);
+  if (metadata.mimeType !== asset.mimeType) throw new ImageImportError('UNSUPPORTED_FORMAT');
+  const decoded = await decodeWithFabricUrl(file, signal);
+  if (decoded.width !== asset.width || decoded.height !== asset.height) {
+    decoded.dispose();
+    throw new ImageImportError('DECODE_FAILED');
+  }
+  decoded.assetId = asset.id;
+  decoded.importedAt = asset.importedAt;
+  decoded.mimeType = asset.mimeType;
+  return decoded;
 }
 
 export async function decodeWithImageBitmap(

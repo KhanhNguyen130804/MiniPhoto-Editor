@@ -27,7 +27,7 @@ Tài liệu này gồm phân tích ý tưởng, phạm vi sản phẩm, yêu c�
 
 | ID | Nội dung | Trạng thái |
 |---|---|---|
-| D01 | Website desktop, giao diện responsive trên mobile; không làm app Android/iOS riêng | Người dùng xác nhận |
+| D01 | Website desktop, giao diện responsive trên mobile; theo yêu cầu bổ sung ngày 09/10/2026, có thêm wrapper Android Capacitor để cài APK debug thủ công. iOS native và phát hành Play Store ngoài phạm vi | Người dùng xác nhận; Android là quyết định bổ sung |
 | D02 | MVP chỉ có Brightness, Contrast, Saturation | Người dùng xác nhận |
 | D03 | Exposure, Temperature, Blur, Sharpness thuộc phiên bản sau | Người dùng xác nhận |
 | D04 | Tự lưu 1 bản nháp cục bộ để khôi phục sau reload | Người dùng xác nhận |
@@ -159,7 +159,7 @@ Không dùng thời gian ở lại trang làm thước đo chính: một công c
 | History | Undo/redo tối đa 50 bước | Lịch sử vĩnh viễn, timeline |
 | Export | PNG/JPG/WebP, chất lượng lossy, tên file, JPG background | ZIP/batch, SVG/PDF, target KB chính xác |
 | An toàn UX | Compare, cảnh báo thay ảnh/reset, 1 draft cục bộ | Thư viện dự án, file project portable |
-| Thiết bị | Desktop ưu tiên; web responsive có thao tác touch cơ bản | Native app, UX cử chỉ nâng cao |
+| Thiết bị | Desktop ưu tiên; web responsive có thao tác touch cơ bản; Android WebView wrapper dùng lại cùng app | iOS native và UX cử chỉ native nâng cao |
 | Hệ thống | Frontend static, HTTPS, không đăng nhập | Cloud sync, backend, thanh toán, AI |
 
 MVP có 7 nhóm công cụ chính: **Crop · Adjust · Filters · Resize · Text · Shapes · Export**. Rotate/flip nằm trong Crop/Transform; Layers là tab panel; Undo/redo và Compare nằm ở topbar. Không bỏ công cụ chỉ vì không có một nút sidebar riêng.

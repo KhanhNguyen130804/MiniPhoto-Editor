@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Day 21 — draft save</title>
+    <link rel="stylesheet" href="/src/app.css" />
+  </head>
+  <body>
+    <main>
+      <h1>Day 21 — lưu bản nháp</h1>
+      <p>Chạy trên origin cô lập <code>http://127.0.0.1:5175</code>. Harness kiểm IndexedDB, thumbnail, debounce, revision và rollback.</p>
+      <button id="run" type="button">Chạy kiểm tra Day 21</button>
+      <pre id="results" role="status" aria-live="polite">Đang kiểm tra dữ liệu đã lưu…</pre>
+      <h2>Smoke test trạng thái trong editor</h2>
+      <ol>
+        <li>Nhập ảnh: status chuyển DIRTY → SAVING → SAVED sau transaction hoàn tất.</li>
+        <li>Commit chỉnh sửa, Undo rồi Redo: mỗi revision được lưu; nhiều thao tác nhanh chỉ lưu revision mới nhất.</li>
+        <li>Zoom/pan và export không đổi trạng thái lưu hoặc revision.</li>
+        <li>Trong khi save đang chạy, tạo revision mới: save cũ không được hiển thị SAVED cho revision mới.</li>
+        <li>Khi harness mô phỏng transaction abort, status là SAVE_ERROR; vẫn chỉnh sửa và export được.</li>
+        <li>Chấp nhận thay ảnh thành công thì draft đổi cùng asset; hủy thay ảnh giữ document đang mở.</li>
+      </ol>
+      <p>Sau khi harness pass, tải lại trang này rồi xác nhận bản nháp vẫn đọc được trước khi chạy lại.</p>
+    </main>
+    <script type="module" src="./day21-draft-save.ts"></script>
+  </body>
+</html>
