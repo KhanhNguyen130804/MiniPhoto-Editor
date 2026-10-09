@@ -542,6 +542,8 @@ function EditorPage({
   const canvasActionsRef = useRef<EditorCanvasHandle>(null);
   const finishTextEdit = () => canvasActionsRef.current?.finishEditorEdit() !== false;
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const propertiesPanelRef = useRef<HTMLElement>(null);
+  const propertiesToggleRef = useRef<HTMLButtonElement>(null);
   const [panelOpen, setPanelOpen] = useState(false);
   const [compareActive, setCompareActive] = useState(false);
   const [activePanelTab, setActivePanelTab] = useState<'properties' | 'layers'>('properties');
@@ -941,22 +943,31 @@ function EditorPage({
     : snapshot, [snapshot, adjustmentPreview]);
   const compareSnapshot = useMemo(() => createCompareSnapshot(snapshot), [snapshot]);
 
+  const scrollFocusedPanelControl = () => {
+    const panel = propertiesPanelRef.current;
+    const control = document.activeElement;
+    if (!window.matchMedia('(max-width: 767px)').matches) {
+      if (control === textAreaRef.current) textAreaRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      return;
+    }
+    if (!panel || !(control instanceof HTMLElement) || !panel.contains(control)) return;
+    const panelBounds = panel.getBoundingClientRect();
+    const controlBounds = control.getBoundingClientRect();
+    const top = panelBounds.top + 8;
+    const bottom = panelBounds.bottom - 8;
+    if (controlBounds.top < top || controlBounds.height > bottom - top) {
+      panel.scrollTop += controlBounds.top - top;
+    } else if (controlBounds.bottom > bottom) {
+      panel.scrollTop += controlBounds.bottom - bottom;
+    }
+  };
+
   useEffect(() => {
     const viewport = window.visualViewport;
     const syncViewport = () => {
       const height = viewport?.height ?? window.innerHeight;
-      const offsetTop = viewport?.offsetTop ?? 0;
       document.documentElement.style.setProperty('--visual-viewport-height', `${height}px`);
-      document.documentElement.style.setProperty(
-        '--visual-viewport-bottom-inset',
-        `${Math.max(0, window.innerHeight - offsetTop - height)}px`,
-      );
-      requestAnimationFrame(() => {
-        const textArea = textAreaRef.current;
-        if (textArea && document.activeElement === textArea) {
-          textArea.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-        }
-      });
+      requestAnimationFrame(scrollFocusedPanelControl);
     };
     syncViewport();
     window.addEventListener('resize', syncViewport);
@@ -967,7 +978,6 @@ function EditorPage({
       viewport?.removeEventListener('resize', syncViewport);
       viewport?.removeEventListener('scroll', syncViewport);
       document.documentElement.style.removeProperty('--visual-viewport-height');
-      document.documentElement.style.removeProperty('--visual-viewport-bottom-inset');
     };
   }, []);
 
@@ -1316,6 +1326,7 @@ function EditorPage({
         setTextToolOpen(false);
         setShapeToolOpen(false);
         setPanelOpen(false);
+        propertiesToggleRef.current?.focus({ preventScroll: true });
         event.preventDefault();
       }
     };
@@ -1408,6 +1419,7 @@ function EditorPage({
           </button>
           <button
             className="editor-properties-toggle"
+            ref={propertiesToggleRef}
             type="button"
             aria-expanded={panelOpen}
             aria-controls="editor-properties-panel"
@@ -1423,7 +1435,7 @@ function EditorPage({
         </div>
       </header>
 
-      <div className="editor-layout">
+      <div className={`editor-layout${panelOpen ? ' editor-layout--panel-open' : ''}`}>
         <aside className="tool-rail" aria-label="Công cụ chỉnh sửa">
           {tools.map((tool, index) => (
             <button
@@ -1506,14 +1518,19 @@ function EditorPage({
 
         <aside
           id="editor-properties-panel"
+          ref={propertiesPanelRef}
           className={`properties-panel${panelOpen ? ' properties-panel--open' : ''}${activePanelTab === 'layers' ? ' properties-panel--layers' : ''}`}
           aria-labelledby="properties-title"
           inert={compareActive}
+          onFocusCapture={() => requestAnimationFrame(scrollFocusedPanelControl)}
         >
           <div className="properties-panel__heading">
             <h2 id="properties-title">Thuộc tính</h2>
             <span>{activeTool ?? '—'}</span>
-            <button className="properties-panel__close" type="button" onClick={() => setPanelOpen(false)} aria-label="Đóng bảng công cụ">
+            <button className="properties-panel__close" type="button" onClick={() => {
+              setPanelOpen(false);
+              propertiesToggleRef.current?.focus({ preventScroll: true });
+            }} aria-label="Đóng bảng công cụ">
               Đóng
             </button>
           </div>
@@ -1761,7 +1778,6 @@ function EditorPage({
                       aria-describedby="selected-text-count"
                       onFocus={() => {
                         canvasActionsRef.current?.beginTextareaEdit(selectedText.id);
-                        requestAnimationFrame(() => textAreaRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
                       }}
                       onBlur={() => canvasActionsRef.current?.finishTextEdit()}
                       onChange={(event) => {

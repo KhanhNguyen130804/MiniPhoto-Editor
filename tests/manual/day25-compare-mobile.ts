@@ -100,3 +100,130 @@ runButton.addEventListener('click', async () => {
     runButton.disabled = false;
   }
 });
+
+const layoutButton = document.querySelector<HTMLButtonElement>('#run-layout')!;
+const layoutResults = document.querySelector<HTMLElement>('#layout-results')!;
+
+async function waitForLayout(check: () => boolean) {
+  const deadline = performance.now() + 5000;
+  while (!check()) {
+    assert(performance.now() < deadline, 'UI did not reach the expected layout within 5 seconds.');
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+}
+
+layoutButton.addEventListener('click', async () => {
+  layoutButton.disabled = true;
+  layoutResults.textContent = 'Đang chạy…';
+  const frame = document.createElement('iframe');
+  frame.title = 'MiniPhoto mobile layout regression';
+  frame.style.cssText = 'display:block;width:360px;height:800px;border:0';
+  frame.src = '/';
+  document.body.append(frame);
+  const lines: string[] = [];
+  try {
+    await waitForLayout(() => Boolean(frame.contentDocument?.querySelector('input[type="file"]')));
+    const app = frame.contentDocument!;
+    await waitForLayout(() => [...app.querySelectorAll<HTMLButtonElement>('button')]
+      .some((item) => item.textContent?.trim() === 'Chọn ảnh' && !item.disabled));
+    assert(!app.querySelector('.draft-card'), 'Use an isolated origin with no existing draft.');
+    const button = (name: string) => {
+      const element = [...app.querySelectorAll<HTMLButtonElement>('button')]
+        .find((item) => item.textContent?.trim() === name
+          || (item.classList.contains('tool-item') && item.lastElementChild?.textContent === name));
+      assert(element && !element.disabled, `Button unavailable: ${name}`);
+      return element;
+    };
+    const fixture = document.createElement('canvas');
+    fixture.width = 1922;
+    fixture.height = 1143;
+    const context = fixture.getContext('2d')!;
+    context.fillStyle = '#4682b4';
+    context.fillRect(0, 0, fixture.width, fixture.height);
+    const blob = await new Promise<Blob | null>((resolve) => fixture.toBlob(resolve, 'image/png'));
+    assert(blob, 'Fixture encoding failed.');
+    const transfer = new DataTransfer();
+    transfer.items.add(new File([blob], 'mobile-layout.png', { type: 'image/png' }));
+    const input = app.querySelector<HTMLInputElement>('input[type="file"]')!;
+    input.files = transfer.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await waitForLayout(() => Boolean(app.querySelector('.canvas-surface canvas')));
+    await waitForLayout(() => !app.querySelector<HTMLButtonElement>('.tool-item')?.disabled);
+
+    const assertLayout = () => {
+      const stage = app.querySelector<HTMLElement>('.canvas-stage')!.getBoundingClientRect();
+      const panel = app.querySelector<HTMLElement>('.properties-panel')!.getBoundingClientRect();
+      assert(stage.width > 0 && stage.height > 0, 'Canvas has no visible area.');
+      const sidePanel = frame.contentWindow!.innerWidth >= 520
+        && frame.contentWindow!.innerWidth > frame.contentWindow!.innerHeight;
+      assert(sidePanel ? stage.right <= panel.left + 1 : stage.bottom <= panel.top + 1,
+        'Panel overlaps the canvas or uses the wrong orientation.');
+      assert(app.documentElement.scrollWidth <= frame.contentWindow!.innerWidth, 'Editor overflows horizontally.');
+      const handles = [...app.querySelectorAll<HTMLElement>('.crop-handle')];
+      assert(handles.length === 8, 'Pending crop handles are missing.');
+      for (const handle of handles) {
+        const bounds = handle.getBoundingClientRect();
+        assert(bounds.left >= stage.left && bounds.top >= stage.top
+          && bounds.right <= stage.right && bounds.bottom <= stage.bottom, 'A fitted crop handle is clipped.');
+      }
+    };
+    for (const orientation of ['landscape source', 'portrait source']) {
+      button('Cắt').click();
+      for (const [width, height] of [[360, 800], [390, 844], [430, 932], [640, 360], [360, 500]]) {
+        frame.style.width = `${width}px`;
+        frame.style.height = `${height}px`;
+        await waitForLayout(() => frame.contentWindow!.innerWidth === width
+          && Math.abs(app.querySelector('.editor-shell')!.getBoundingClientRect().height - height) < 1);
+        await waitForLayout(() => {
+          try { assertLayout(); return true; } catch { return false; }
+        });
+        assertLayout();
+        lines.push(`PASS ${orientation} ${width}×${height}: canvas/panel separate, all crop handles visible, no overflow`);
+      }
+      const numeric = app.querySelectorAll<HTMLInputElement>('.crop-number-grid input')[3];
+      assert(numeric, 'Crop numeric field is missing.');
+      numeric.focus({ preventScroll: true });
+      await waitForLayout(() => {
+        const bounds = numeric.getBoundingClientRect();
+        const panel = app.querySelector('.properties-panel')!.getBoundingClientRect();
+        return bounds.top >= panel.top && bounds.bottom <= panel.bottom;
+      });
+      assert(frame.contentWindow!.scrollY === 0, 'Focusing a numeric field scrolled the outer editor.');
+      const pendingFields = [...app.querySelectorAll<HTMLInputElement>('.crop-number-grid input')].map((field) => field.value).join(',');
+      const oldHeight = app.querySelector('.canvas-stage')!.getBoundingClientRect().height;
+      button('Đóng').click();
+      assert(app.activeElement?.classList.contains('editor-properties-toggle'), 'Close did not restore toggle focus.');
+      await waitForLayout(() => app.querySelector('.canvas-stage')!.getBoundingClientRect().height > oldHeight);
+      app.querySelector<HTMLButtonElement>('.editor-properties-toggle')!.click();
+      await waitForLayout(() => app.querySelector('.properties-panel')!.getBoundingClientRect().height > 0);
+      assert([...app.querySelectorAll<HTMLInputElement>('.crop-number-grid input')].map((field) => field.value).join(',') === pendingFields,
+        'Closing/reopening the panel changed the pending crop.');
+      button('Hủy cắt').click();
+      if (orientation === 'landscape source') {
+        await waitForLayout(() => !app.querySelector<HTMLButtonElement>('[aria-label="Xoay phải 90 độ"]')?.disabled);
+        fixture.width = 1143;
+        fixture.height = 1922;
+        context.fillStyle = '#4682b4';
+        context.fillRect(0, 0, fixture.width, fixture.height);
+        const portraitBlob = await new Promise<Blob | null>((resolve) => fixture.toBlob(resolve, 'image/png'));
+        assert(portraitBlob, 'Portrait fixture encoding failed.');
+        transfer.items.clear();
+        transfer.items.add(new File([portraitBlob], 'mobile-layout-portrait.png', { type: 'image/png' }));
+        input.files = transfer.files;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        await waitForLayout(() => Boolean(app.querySelector('dialog[open]'))
+          || app.querySelector('.workspace-controls strong')?.textContent === '1143 × 1922 px');
+        app.querySelector<HTMLButtonElement>('dialog[open] .button-primary')?.click();
+        await waitForLayout(() => app.querySelector('.workspace-controls strong')?.textContent === '1143 × 1922 px');
+        await waitForLayout(() => !app.querySelector<HTMLButtonElement>('.tool-item')?.disabled);
+      }
+      lines.push(`PASS ${orientation}: focused numeric field, close/reopen focus and pending crop preserved`);
+    }
+    layoutResults.textContent = lines.join('\n');
+  } catch (error) {
+    layoutResults.textContent = [...lines, `FAIL ${error instanceof Error ? error.message : String(error)}`].join('\n');
+  } finally {
+    frame.remove();
+    layoutButton.disabled = false;
+  }
+});

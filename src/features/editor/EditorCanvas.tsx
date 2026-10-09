@@ -123,7 +123,14 @@ function centerDocument(canvas: Canvas, documentSize: Size, viewportSize: Size, 
 }
 
 function fitZoom(documentSize: Size, viewportSize: Size) {
-  return Math.min(viewportSize.width / documentSize.width, viewportSize.height / documentSize.height, MAX_ZOOM);
+  const gutter = window.matchMedia('(max-width: 767px)').matches
+    ? Math.min(16, viewportSize.width / 4, viewportSize.height / 4)
+    : 0;
+  return Math.min(
+    (viewportSize.width - gutter * 2) / documentSize.width,
+    (viewportSize.height - gutter * 2) / documentSize.height,
+    MAX_ZOOM,
+  );
 }
 
 const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function EditorCanvas({
@@ -805,7 +812,21 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
 
       const currentDocument = documentSizeRef.current;
       if (validSize(currentDocument)) {
-        centerDocument(canvas, currentDocument, nextSize, canvas.getZoom());
+        let nextZoom = canvas.getZoom();
+        if (window.matchMedia('(max-width: 767px)').matches) {
+          const panPointer = panStartRef.current?.pointerId;
+          const cropPointer = cropDragRef.current?.pointerId;
+          const stage = stageRef.current;
+          const cropFrame = stage?.querySelector<HTMLElement>('.crop-frame');
+          if (panPointer !== undefined && stage?.hasPointerCapture(panPointer)) stage.releasePointerCapture(panPointer);
+          if (cropPointer !== undefined && cropFrame?.hasPointerCapture(cropPointer)) cropFrame.releasePointerCapture(cropPointer);
+          panStartRef.current = null;
+          cropDragRef.current = null;
+          setPanning(false);
+          nextZoom = fitZoom(currentDocument, nextSize);
+          setZoom(nextZoom);
+        }
+        centerDocument(canvas, currentDocument, nextSize, nextZoom);
         syncViewportTransform(canvas);
       }
     };
