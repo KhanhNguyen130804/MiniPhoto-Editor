@@ -88,16 +88,24 @@ export type SceneObjectSnapshot = SourceImageSnapshot | TextOverlaySnapshot | Sh
 
 export type PresetId = 'original' | 'warm' | 'cool' | 'vintage' | 'bw' | 'fade' | 'vivid' | 'film' | 'sepia' | 'dramatic';
 
+export type ColorTransferSettings = {
+  readonly algorithmVersion: 1;
+  readonly gain: readonly [number, number, number];
+  readonly offset: readonly [number, number, number];
+  readonly strength: number;
+};
+
 export type ImageAppearanceSnapshot = {
   readonly presetId: PresetId;
   readonly presetVersion: number;
   readonly brightness: number;
   readonly contrast: number;
   readonly saturation: number;
+  readonly colorTransfer: ColorTransferSettings | null;
 };
 
 export type EditorSnapshot = {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly document: {
     readonly width: number;
     readonly height: number;
@@ -120,7 +128,7 @@ export function createImageBaselineSnapshot(
   }
 
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     document: { width, height, sourceAssetId },
     documentTransform: [1, 0, 0, 1, 0, 0],
     imageAppearance: {
@@ -129,6 +137,7 @@ export function createImageBaselineSnapshot(
       brightness: 0,
       contrast: 0,
       saturation: 0,
+      colorTransfer: null,
     },
     scene: [{
       id: sourceAssetId,

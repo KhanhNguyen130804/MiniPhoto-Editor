@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="vi">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kiểm tra màu từ ảnh mẫu</title><link rel="stylesheet" href="/src/app.css"></head>
+<body>
+  <h1>Màu từ ảnh mẫu</h1>
+  <p>Dùng origin kiểm tra riêng và không mở Editor khác. Harness tạo/xóa draft tổng hợp của chính nó.</p>
+  <button id="run" type="button">Chạy core, render và persistence</button>
+  <pre id="results" role="status">Chưa chạy.</pre>
+  <button id="performance" type="button">Đo 3 MP và 12 MP</button>
+  <pre id="performance-results" role="status">Chưa đo.</pre>
+  <h2>Luồng UI cần kiểm trên app thật</h2>
+  <ol>
+    <li>Nhập ảnh chính, mở Bộ lọc, chọn ảnh mẫu. Chờ preview rồi chỉnh độ mạnh; nhãn lưu và bản nháp phải giữ trạng thái đã commit.</li>
+    <li>Nhập 101 hoặc để trống: Apply bị khóa. Nhập 0, Apply: về màu trước hiệu ứng; Undo khôi phục.</li>
+    <li>Apply tạo một bước Undo/Redo; Cancel/Escape bỏ xem thử. Đóng/mở bảng vẫn giữ pending.</li>
+    <li>Đổi công cụ, thay ảnh chính hoặc xuất ảnh khi pending: kiểm đủ Apply/Bỏ xem thử/Tiếp tục chỉnh.</li>
+    <li>Thay mẫu bị lỗi vẫn giữ preview hợp lệ; chọn A rồi B nhanh, kết quả A tới muộn không được ghi đè B.</li>
+    <li>Giữ Compare rồi thả/cancel/blur: về đúng preview; màu chữ/hình không đổi.</li>
+    <li>Reload chỉ khôi phục màu đã Apply. Không cần file mẫu; thumbnail không được hiện nhầm khi Undo/restore.</li>
+    <li>Ở 360 px dùng đủ picker, ô số, slider, dialog và export bằng keyboard/touch; thử Android Back và Gallery trên thiết bị.</li>
+    <li>Chọn/thay/hủy 20 lần, kiểm cleanup và network: ảnh mẫu không gửi ra ngoài origin.</li>
+    <li>Dùng ảnh chân dung, sản phẩm và phong cảnh thật để đánh giá ám da, chi tiết sáng/tối. Harness tổng hợp không thay QA ảnh thật.</li>
+  </ol>
+  <script type="module" src="/tests/manual/color-transfer.ts"></script>
+</body></html>

@@ -4,6 +4,8 @@
 
 ## Cơ sở lập kế hoạch
 
+**Công việc bổ sung 16/10/2026:** Màu từ ảnh mẫu được người dùng giao bằng implementation plan riêng. Có core CIELAB CPU/WebGL, UI pending/Apply/Cancel, schema 2→3, draft/history/compare/export và harness. Chi tiết AC, số đo và giới hạn tại [COLOR_TRANSFER.md](COLOR_TRANSFER.md). Đây là tính năng bổ sung, không thay Day 26–30 hoặc đóng các gate QA toàn sản phẩm; QA thiết bị thật vẫn mở.
+
 - **Kế hoạch cơ sở:** 30 ngày công, chia thành 6 phase; nằm trong ước lượng 24–36 ngày công của PRD.
 - **Nhịp làm việc giả định:** một developer đã biết React/TypeScript, làm 5 ngày mỗi tuần; chưa có deadline được xác nhận.
 - **Dự phòng:** giữ thêm 15–25% thời lượng ngoài 30 ngày cơ sở nếu spike engine, bộ nhớ, mobile hoặc trình duyệt phát sinh vấn đề.

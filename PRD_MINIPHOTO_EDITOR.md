@@ -465,9 +465,37 @@ RGB gain được thể hiện bằng ma trận màu có đường chéo R/G/B v
 
 Original **chỉ tắt preset**; không reset slider hoặc tài liệu. Chọn lại preset đang dùng không tạo commit. Một lần chọn filter tạo một commit.
 
-Không có intensity slider trong P0. Film là preset màu, không mô phỏng hạt film hoặc nhiễu ngẫu nhiên. Tên preset không cam kết tái tạo một loại film thương mại.
+Các preset P0 không có intensity slider riêng. Film là preset màu, không mô phỏng hạt film hoặc nhiễu ngẫu nhiên. Tên preset không cam kết tái tạo một loại film thương mại.
 
 Đặt `presetVersion = 1`. Cần QA ít nhất ảnh chân dung, sản phẩm, phong cảnh và PNG alpha trước khi chốt màu. Khi thay công thức, tăng version và giữ công thức cũ để khôi phục draft cũ đúng; không đổi màu dự án cũ âm thầm.
+
+### 17.1. FR-16 — Màu từ ảnh mẫu (bổ sung được giao 16/10/2026)
+
+Trong bảng Bộ lọc, người dùng chọn một JPG/PNG/WebP tĩnh theo giới hạn import hiện có, xem thử tông màu tổng thể, chỉnh độ mạnh 0–100% (mặc định 70%) rồi Apply hoặc Cancel. Đây là thanh độ mạnh riêng của màu mẫu; các preset v1 giữ nguyên.
+
+- Phân tích alpha-weighted trong CIELAB sRGB/D65 trên mẫu cạnh dài tối đa 256 px. Ảnh nguồn lấy phần nằm trong document trước màu/overlay; ảnh mẫu lấy toàn khung. Không phân tích lại khi thay geometry sau Apply.
+- Pipeline: source → màu mẫu → preset → ba slider. Chỉ ảnh nền bị đổi; alpha, text/shapes, geometry và z-order được giữ.
+- Apply/Xóa màu mẫu tạo tối đa một history step; no-op/Cancel không tạo step. Pending không autosave. Đổi công cụ/export/thay ảnh có lựa chọn Apply/Bỏ xem thử/Tiếp tục; rời Editor bỏ pending, Back Android ưu tiên hủy pending/job.
+- Compare tắt màu mẫu tạm thời; Original chỉ tắt preset, Reset Adjust chỉ reset ba slider.
+- Snapshot schema 3 lưu version/hệ số/strength, không chứa ảnh mẫu. Schema 2 được chuyển trong RAM và giữ record cũ đến lần save sau. Version không hiểu đi qua recovery và không tự xóa dữ liệu.
+- Bản v1 dùng thuật toán thống kê toàn ảnh, không phân vùng/bảo vệ da/AI; chất lượng ảnh thật và hiệu năng thiết bị phải được kiểm riêng.
+
+| AC | Tiêu chí nghiệm thu bổ sung |
+|---|---|
+| CT-01 | JPG/PNG/WebP tĩnh, EXIF và alpha đúng; từ chối nhiều file, animation, lỗi hoặc quá giới hạn và giữ trạng thái hợp lệ trước đó. |
+| CT-02 | Hủy picker/job hoặc Escape không thay canonical snapshot/history/draft. |
+| CT-03 | Strength 0 bỏ qua filter; ảnh tự làm mẫu trung tính trong sai số tối đa 1 mức RGB trên fixture kiểm soát. |
+| CT-04 | Màu phẳng, đen/trắng, đơn sắc, 1×1 và mẫu trong suốt không gây NaN/Infinity/crash. |
+| CT-05 | Apply/Xóa màu tạo đúng một Undo khi có thay đổi; Cancel/no-op không thêm history; sửa sau Undo xóa nhánh Redo. |
+| CT-06 | Overlay, visibility, thứ tự layer, geometry và alpha được giữ; Original và Reset Adjust đúng phạm vi. |
+| CT-07 | Compare pointer/keyboard và cancel/blur trở về đúng preview, không commit màu tạm. |
+| CT-08 | PNG/JPG/WebP đúng MIME, kích thước, màu, alpha/matte; file tải xuống được mở lại kiểm. |
+| CT-09 | Save/reload/restore giữ màu không cần mẫu; schema 2 migration đúng, dữ liệu lỗi được giữ để recovery. |
+| CT-10 | Job cũ sau thay mẫu/hủy/thay tài liệu/unmount không ghi đè; chọn mẫu không tranh lease lưu giữa tab. |
+| CT-11 | Keyboard-only, mobile 360 px và Android Back dùng được; kiểm ảnh lưu Gallery trên thiết bị. |
+| CT-12 | Không gửi pixel/mẫu/snapshot ra mạng; chọn/thay/hủy lặp không tích lũy URL, ảnh decode hoặc job. |
+
+Công thức cụ thể và trạng thái bằng chứng tại [COLOR_TRANSFER.md](docs/COLOR_TRANSFER.md). Việc có implementation không tự chứng minh mọi AC hoặc release gate.
 
 ## 18. FR-08 — Text
 
