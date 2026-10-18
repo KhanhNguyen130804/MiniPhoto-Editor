@@ -5,6 +5,8 @@ import type { FabricImage } from 'fabric';
 import EditorCanvas, { type EditorCanvasHandle } from './features/editor/EditorCanvas';
 import LayersPanel from './features/editor/LayersPanel';
 import PresetControls from './features/editor/PresetControls';
+import ColorTransferControls, { ColorTransferDecisionDialog } from './features/editor/ColorTransferControls';
+import { useColorTransfer } from './features/editor/useColorTransfer';
 import {
   canRedo,
   canUndo,
@@ -222,6 +224,7 @@ function HelpDialogTrigger({ dark = false }: { dark?: boolean }) {
         <p id="help-dialog-copy">
           Bạn có thể mở ảnh JPG, PNG hoặc WebP tĩnh, cắt, đổi kích thước, xoay/lật, chọn bộ lọc, tinh chỉnh màu, thêm chú thích tiếng Việt, tạo hình khối và tải ảnh xuống. Bản nháp được lưu trên thiết bị; khi mở lại, bạn có thể chọn tiếp tục hoặc bỏ bản nháp.
         </p>
+        <p>Trong Bộ lọc, chọn ảnh mẫu để xem thử tông màu, chỉnh Độ mạnh rồi bấm Áp dụng. Escape hoặc Hủy xem thử giữ các chỉnh sửa trước đó.</p>
         <div className="dialog-note">
           <strong>Cần trợ giúp ngay?</strong>
           <span>Hãy quay lại trang chủ hoặc xem thông tin quyền riêng tư.</span>
@@ -531,7 +534,7 @@ function EditorPage({
   onApplyText: (snapshot: EditorSnapshot) => void;
   onApplyShape: (snapshot: EditorSnapshot) => void;
   onApplyLayer: (snapshot: EditorSnapshot) => void;
-  onChoose: (event: MouseEvent<HTMLButtonElement>) => void;
+  onChoose: (target: HTMLButtonElement) => void;
   replaceButtonRef: RefObject<HTMLButtonElement | null>;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
   draftSaveStatus: DraftSaveStatus;
@@ -590,6 +593,14 @@ function EditorPage({
   const adjustmentErrorsRef = useRef<Partial<Record<AdjustmentField, string>>>({});
   const latestSnapshotRef = useRef(snapshot);
   latestSnapshotRef.current = snapshot;
+  const color = useColorTransfer(candidate, snapshot, (next) => {
+    latestSnapshotRef.current = next;
+    onApplyAdjustments(next);
+  }, () => {
+    if (!finishTextEdit()) return false;
+    finishAdjustmentOperation();
+    return true;
+  });
 
   const handleTextSelected = (id: string | null, text = '', isNew = false, properties?: TextProperties, cancelled = false, openProperties = true) => {
     if (cancelled || !id) {
@@ -939,8 +950,8 @@ function EditorPage({
   };
 
   const previewSnapshot = useMemo(() => adjustmentPreview
-    ? { ...snapshot, imageAppearance: { ...snapshot.imageAppearance, ...adjustmentPreview } }
-    : snapshot, [snapshot, adjustmentPreview]);
+    ? { ...color.previewSnapshot, imageAppearance: { ...color.previewSnapshot.imageAppearance, ...adjustmentPreview } }
+    : color.previewSnapshot, [color.previewSnapshot, adjustmentPreview]);
   const compareSnapshot = useMemo(() => createCompareSnapshot(snapshot), [snapshot]);
 
   const scrollFocusedPanelControl = () => {
@@ -1286,11 +1297,12 @@ function EditorPage({
   };
   const activeTool = cropPending ? 'Cắt' : resizePending ? 'Kích thước'
     : filterOpen ? 'Bộ lọc' : adjustmentOpen ? 'Điều chỉnh' : textToolOpen ? 'Chữ' : shapeToolOpen ? 'Hình khối' : null;
-  const documentActionLocked = exportBusy || textFontLoading || Boolean(cropPending || resizePending || adjustmentOperationActive);
+  const baseActionLocked = exportBusy || textFontLoading || Boolean(cropPending || resizePending || adjustmentOperationActive);
+  const documentActionLocked = baseActionLocked || color.active;
   const displayedAdjustments = adjustmentPreview ?? snapshotAdjustments(snapshot);
   const previewCanvasSnapshot = compareActive ? compareSnapshot : previewSnapshot;
   const hasVisibleContent = snapshot.scene.some((item) => item.visible);
-  const compareDisabled = documentActionLocked || status.phase === 'loading';
+  const compareDisabled = baseActionLocked || color.analyzing || (color.pending && !color.canApply) || status.phase === 'loading';
   const startCompare = () => {
     if (compareDisabled || !finishTextEdit()) return;
     setCompareActive(true);
@@ -1302,6 +1314,11 @@ function EditorPage({
       if (event.defaultPrevented) return;
       if (compareActive) {
         stopCompare();
+        event.preventDefault();
+        return;
+      }
+      if (color.active) {
+        color.cancel();
         event.preventDefault();
         return;
       }
@@ -1332,7 +1349,18 @@ function EditorPage({
     };
     window.addEventListener(ANDROID_BACK_EVENT, onAndroidBack);
     return () => window.removeEventListener(ANDROID_BACK_EVENT, onAndroidBack);
-  }, [compareActive, cropPending, resizePending, panelOpen, adjustmentOpen, filterOpen, textToolOpen, shapeToolOpen]);
+  }, [compareActive, cropPending, resizePending, panelOpen, adjustmentOpen, filterOpen, textToolOpen, shapeToolOpen, color.active]);
+
+  useEffect(() => {
+    if (!color.active) return;
+    const onEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || event.defaultPrevented || document.querySelector('dialog[open]')) return;
+      event.preventDefault();
+      color.cancel();
+    };
+    window.addEventListener('keydown', onEscape);
+    return () => window.removeEventListener('keydown', onEscape);
+  }, [color.active]);
 
   useEffect(() => {
     const finishNudge = () => canvasActionsRef.current?.finishNudge();
@@ -1406,14 +1434,17 @@ function EditorPage({
         <div className="editor-topbar__actions">
           <button className="editor-quiet-button" type="button" onClick={() => { if (finishTextEdit()) onUndo(); }} disabled={!undoEnabled || documentActionLocked || compareActive}>Hoàn tác</button>
           <button className="editor-quiet-button" type="button" onClick={() => { if (finishTextEdit()) onRedo(); }} disabled={!redoEnabled || documentActionLocked || compareActive}>Làm lại</button>
-          <button className="editor-quiet-button" type="button" onClick={(event) => { if (finishTextEdit()) onChoose(event); }} ref={replaceButtonRef} disabled={status.phase === 'loading' || documentActionLocked || compareActive}>
+          <button className="editor-quiet-button" type="button" onClick={(event) => {
+            const target = event.currentTarget;
+            color.requestAction(() => { if (finishTextEdit()) onChoose(target); });
+          }} ref={replaceButtonRef} disabled={status.phase === 'loading' || baseActionLocked || compareActive}>
             Thay ảnh
           </button>
           <button
             className="button button-primary editor-export"
             type="button"
-            disabled={documentActionLocked || compareActive}
-            onClick={openExportDialog}
+            disabled={baseActionLocked || compareActive}
+            onClick={() => color.requestAction(openExportDialog)}
           >
             Xuất ảnh
           </button>
@@ -1445,13 +1476,13 @@ function EditorPage({
               disabled={compareActive || (!['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'].includes(tool)) || exportBusy || status.phase === 'loading'
                 || Boolean((cropPending || resizePending) && activeTool !== tool)}
               aria-pressed={['Cắt', 'Kích thước', 'Điều chỉnh', 'Bộ lọc', 'Chữ', 'Hình khối'].includes(tool) ? activeTool === tool : undefined}
-              onClick={tool === 'Cắt'
+              onClick={() => color.requestAction(() => (tool === 'Cắt'
                 ? (cropPending ? cancelCrop : startCrop)
                 : tool === 'Kích thước' ? (resizePending ? cancelResize : startResize)
                     : tool === 'Điều chỉnh' ? toggleAdjustments
                     : tool === 'Bộ lọc' ? toggleFilters
                       : tool === 'Chữ' ? toggleTextTool
-                        : tool === 'Hình khối' ? toggleShapeTool : undefined}
+                        : tool === 'Hình khối' ? toggleShapeTool : undefined)?.())}
             >
               <span className="tool-item__icon" aria-hidden="true">{['⌗', '↔', '◐', '✧', 'T', '◇'][index]}</span>
               <span>{tool}</span>
@@ -1498,6 +1529,8 @@ function EditorPage({
             ref={canvasActionsRef}
             image={candidate.image}
             snapshot={previewCanvasSnapshot}
+            appearanceRequest={compareActive ? undefined : color.request}
+            onAppearanceRenderResult={color.onRenderResult}
             detachImageRef={detachImageRef}
             onTransform={onTransform}
             documentActionsDisabled={documentActionLocked || compareActive}
@@ -1669,12 +1702,16 @@ function EditorPage({
               }}
             />
           ) : filterOpen ? (
-            <PresetControls
-              candidate={candidate}
-              snapshot={snapshot}
-              disabled={exportBusy || status.phase === 'loading'}
-              onSelect={choosePreset}
-            />
+            <>
+              <ColorTransferControls color={color} disabled={baseActionLocked || status.phase === 'loading' || compareActive}
+                blackAndWhite={snapshot.imageAppearance.presetId === 'bw'} onOriginal={() => choosePreset('original')} />
+              <PresetControls
+                candidate={candidate}
+                snapshot={snapshot}
+                disabled={exportBusy || color.active || status.phase === 'loading'}
+                onSelect={choosePreset}
+              />
+            </>
           ) : adjustmentOpen ? (
             <section className="adjustment-controls" aria-labelledby="adjustment-controls-title">
               <div className="adjustment-controls__intro">
@@ -2013,7 +2050,7 @@ function EditorPage({
                 : draftLease.kind === 'error' ? 'Không kiểm tra được quyền lưu; thay đổi ở đây chưa được tự lưu.'
                   : 'Tab này không còn quyền lưu; thay đổi ở đây chưa được tự lưu.'}
             {(draftLease.kind === 'held' || draftLease.kind === 'lost' || draftLease.kind === 'error') && (
-              <button type="button" className="editor-statusbar__takeover" onClick={onTakeOverDraft}>
+              <button type="button" className="editor-statusbar__takeover" onClick={onTakeOverDraft} disabled={color.active}>
                 Lưu phiên này thay bản nháp
               </button>
             )}
@@ -2022,6 +2059,7 @@ function EditorPage({
         <a href="/privacy">Quyền riêng tư</a>
       </footer>
 
+      <ColorTransferDecisionDialog color={color} />
       <dialog
         ref={exportDialogRef}
         className="export-dialog"
@@ -2385,9 +2423,9 @@ export default function App() {
     }
   };
 
-  const openFilePicker = (event: MouseEvent<HTMLButtonElement>) => {
+  const openFilePicker = (event: MouseEvent<HTMLButtonElement> | HTMLButtonElement) => {
     if (importControllerRef.current || pendingCandidateRef.current || draftInspection.kind === 'checking' || draftInspection.kind === 'error') return;
-    returnFocusRef.current = event.currentTarget;
+    returnFocusRef.current = event instanceof HTMLButtonElement ? event : event.currentTarget;
     setImportStatus(idleImportStatus);
     fileInputRef.current?.click();
   };

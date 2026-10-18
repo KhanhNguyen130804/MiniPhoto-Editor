@@ -4,6 +4,7 @@ import { MAX_OVERLAYS, createFabricOverlay } from './scene';
 import { validateShapeOverlay } from './shapes';
 import { MAX_TEXT_CODE_POINTS, normalizeTextContent, type EditorSnapshot, type SceneObjectSnapshot, type ShapeOverlaySnapshot, type TextOverlaySnapshot } from './snapshot';
 import { validateTextPropertiesPatch } from './text';
+import { validateColorTransfer } from './colorTransfer';
 
 const MAX_SNAPSHOT_BYTES = 1024 * 1024;
 
@@ -13,7 +14,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function hasKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
-  return Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+  return Object.keys(value).length === keys.length && keys.every((key) => Object.prototype.hasOwnProperty.call(value, key));
 }
 
 function finite(value: unknown): value is number {
@@ -92,7 +93,7 @@ function validateOverlay(value: unknown): asserts value is SceneObjectSnapshot {
 
 export function validateEditorSnapshot(value: unknown, asset: { id: string; width: number; height: number }): asserts value is EditorSnapshot {
   if (!isRecord(value) || !hasKeys(value, ['schemaVersion', 'document', 'documentTransform', 'imageAppearance', 'scene'])
-    || value.schemaVersion !== 2) throw new TypeError('Phiên bản snapshot không được hỗ trợ.');
+    || value.schemaVersion !== 3) throw new TypeError('Phiên bản snapshot không được hỗ trợ.');
   const serialized = JSON.stringify(value);
   if (new TextEncoder().encode(serialized).byteLength > MAX_SNAPSHOT_BYTES) throw new RangeError('Snapshot vượt quá giới hạn 1 MiB.');
 
@@ -106,12 +107,13 @@ export function validateEditorSnapshot(value: unknown, asset: { id: string; widt
 
   validateTransform(value.documentTransform);
   const appearance = value.imageAppearance;
-  if (!isRecord(appearance) || !hasKeys(appearance, ['presetId', 'presetVersion', 'brightness', 'contrast', 'saturation'])
+  if (!isRecord(appearance) || !hasKeys(appearance, ['presetId', 'presetVersion', 'brightness', 'contrast', 'saturation', 'colorTransfer'])
     || !PRESET_OPTIONS.some((preset) => preset.id === appearance.presetId)
     || appearance.presetVersion !== CURRENT_PRESET_VERSION
     || ![appearance.brightness, appearance.contrast, appearance.saturation].every((part) => Number.isInteger(part) && (part as number) >= -100 && (part as number) <= 100)) {
     throw new TypeError('Bộ lọc hoặc điều chỉnh trong snapshot không được hỗ trợ.');
   }
+  if (appearance.colorTransfer !== null) validateColorTransfer(appearance.colorTransfer);
 
   if (!Array.isArray(value.scene) || value.scene.length < 1 || value.scene.length > MAX_OVERLAYS + 1
     || !validateSource(value.scene[0], asset.id, asset.width, asset.height)
@@ -124,4 +126,17 @@ export function validateEditorSnapshot(value: unknown, asset: { id: string; widt
     if (ids.has(item.id)) throw new TypeError('ID lớp bị trùng.');
     ids.add(item.id);
   }
+}
+
+export function parseEditorSnapshot(value: unknown, asset: { id: string; width: number; height: number }): EditorSnapshot {
+  let normalized = value;
+  if (isRecord(value) && value.schemaVersion === 2) {
+    if (!isRecord(value.imageAppearance)
+      || !hasKeys(value.imageAppearance, ['presetId', 'presetVersion', 'brightness', 'contrast', 'saturation'])) {
+      throw new TypeError('Điều chỉnh màu trong bản nháp cũ không hợp lệ.');
+    }
+    normalized = { ...value, schemaVersion: 3, imageAppearance: { ...value.imageAppearance, colorTransfer: null } };
+  }
+  validateEditorSnapshot(normalized, asset);
+  return normalized;
 }

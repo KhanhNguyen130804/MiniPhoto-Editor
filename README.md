@@ -2,6 +2,26 @@
 
 MiniPhoto Editor là trình chỉnh sửa ảnh chạy cục bộ trong trình duyệt. Bản Android dùng Capacitor để đóng gói cùng giao diện web hiện có; không có backend xử lý ảnh hoặc đồng bộ đám mây.
 
+## Lấy tông màu từ ảnh mẫu
+
+1. Mở ảnh cần chỉnh, chọn **Bộ lọc → Màu từ ảnh mẫu → Chọn ảnh mẫu**.
+2. Chọn một JPG/PNG/WebP tĩnh (≤20 MiB, ≤12 MP, mỗi cạnh ≤8192 px).
+3. Xem thử ở mức 70%, chỉnh **Độ mạnh** 0–100%, rồi **Áp dụng**. **Hủy xem thử/Escape** bỏ phần chưa áp dụng; **Xóa màu mẫu** bỏ riêng hiệu ứng này.
+
+Màu mẫu được áp trước preset và ba slider, chỉ tác động ảnh nền. Một Apply tạo tối đa một bước Undo. Phần xem thử chưa được autosave; khi xuất ảnh hoặc đổi công cụ, chọn áp dụng/bỏ xem thử/tiếp tục chỉnh. Rời Editor bỏ phần chưa áp dụng.
+
+Draft lưu công thức màu, không lưu ảnh mẫu. Sau reload vẫn chỉnh độ mạnh, xóa màu và export được; thumbnail mẫu chỉ còn trong phiên hiện tại. Snapshot schema 2 được đọc sang schema 3 trong RAM; lần lưu tiếp theo mới ghi schema mới. Bản app cũ chỉ hiểu schema 2 không khôi phục đầy đủ draft schema 3.
+
+Chất lượng phụ thuộc hai ảnh; không có phân vùng hay bảo vệ da tự động. Chi tiết thuật toán, kiểm chứng và phần QA còn mở: [docs/COLOR_TRANSFER.md](docs/COLOR_TRANSFER.md).
+
+## Chạy web và harness
+
+```powershell
+npm.cmd run dev -- --host 127.0.0.1 --port 5188 --strictPort
+```
+
+Mở `/tests/manual/color-transfer.html` trên origin kiểm tra riêng, chưa có draft. Harness có core/render/persistence, phép đo 3 MP/12 MP và checklist UI. `npm.cmd run build` chạy typecheck và build web; kết quả mới nhất được ghi trong tài liệu tính năng.
+
 ## Yêu cầu Android
 
 - Node.js 24 (xem `.nvmrc` và `package.json`).

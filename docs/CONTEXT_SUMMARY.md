@@ -1,6 +1,22 @@
 # MiniPhoto Editor — Context Summary
 
-**Checkpoint hiện tại — sửa lỗi nhận dung lượng khi lưu Gallery (09/10/2026):** Người dùng báo app Android hoạt động ổn định ở các chức năng khác, nhưng lưu PNG/JPEG đều báo “Không thể chuẩn bị lưu ảnh: Kích thước ảnh không hợp lệ.” Ảnh chụp xác nhận PNG 1440×1276 đã được tạo, preview hiện và UI báo 1.990.141 byte; ảnh chụp không chứng minh file đã vào thư viện.
+## Checkpoint hiện tại — màu từ ảnh mẫu (16/10/2026)
+
+Người dùng giao triển khai plan lấy tông màu tổng thể. Có mục **Màu từ ảnh mẫu** trong Bộ lọc, CIELAB sRGB/D65 mean/std alpha-weighted, strength 0–100% mặc định 70%, CPU/WebGL trước preset/sliders. Pending tách khỏi canonical/history/draft; Apply/Cancel, deferred action dialog, Compare, Escape/Back và cleanup được nối với Editor hiện có. Không thêm dependency/backend/AI hoặc lưu file mẫu.
+
+Snapshot lên schema 3, schema 2 đọc chuyển trong RAM và không tự ghi lại record. Metadata/version không hợp lệ đi qua source-only recovery, giữ dữ liệu. IndexedDB vẫn v1. App cũ chỉ hiểu schema 2 không khôi phục đầy đủ draft schema 3. Shared pipeline áp dụng cho Editor, preset/draft thumbnail và export. Fixture 8192 px tái hiện clipping trên canvas WebGL Fabric 4096 px; pipeline dùng CPU cho nguồn vượt tile, phục hồi backend chung sau call đồng bộ và không giảm pixel output. WebGL error/context loss được báo lỗi.
+
+**Bằng chứng và trạng thái AC:** [COLOR_TRANSFER.md](COLOR_TRANSFER.md) ghi recipe/invariants, caller, harness, AC CT-01–12, benchmark và ảnh thật. Core mới pass 6 nhóm, CPU/WebGL max RGB difference 1 trên fixture; regression liên quan pass 10 harness/71 nhóm. Automation app thật kiểm pending/autosave, validation, dialog/Undo/Redo, Compare pointer/keyboard/blur, lease observer, restore, output 3 format tải/decode lại, viewport 360 px, 20 vòng chọn/hủy, lỗi render/retry và cleanup. Ba ảnh thật × mẫu ấm/lạnh/tối export đúng kích thước; ảnh khác nội dung có thể bị ám da/nền rõ.
+
+**Chưa nghiệm thu 100%:** CPU preview 3 MP chưa đạt target desktop p95 ≤150 ms ổn định; số đo đồng bộ StaticCanvas/WebGL không thay event-to-paint. Chưa có benchmark mobile/peak memory/OOM thật. `adb devices` không có thiết bị; Android Back chỉ được mô phỏng qua browser event, chưa kiểm native picker/Gallery/touch/IME/notch. Không đóng Gate 4, các gate QA khác hoặc thay Day 26–30. Build/artifact và số đo cuối tại tài liệu tính năng/Walkthrough mục 36.
+
+**Build cuối:** build web/typecheck, sync Capacitor và assembleDebug pass. JS 673,65 kB, còn cảnh báo >500 kB; Gradle còn flatDir. APK 5.645.309 byte, SHA-256 `C5472B6F70A56F8E20185BCA420A291E778339D3D23C03908AD9BD2FB3693925`; JS trong APK khớp dist. Chưa chạy APK. CPU 3 MP p95 167,7 ms ở lần đo cuối, export PNG fixture 3/12 MP dưới 3 giây desktop; không suy ra gate mobile đã đạt.
+
+**Git tại checkpoint triển khai trước công bố:** base HEAD `83b79c3`, nhánh `codex/phase-4-draft-restore`; thay đổi task này chưa commit/push. Yêu cầu tiếp theo của người dùng giao tạo nhánh feature rồi commit/push; nhánh công bố là `codex/feature-color-transfer`, tách từ base này. Giữ nguyên untracked có sẵn `.codex-remote-attachments/`, `.idea/`, `android/gradle/.idea/`, `bt12-edited.png`. Các checkpoint dưới là lịch sử, không phải bằng chứng hiện tại.
+
+## Lịch sử trước tính năng màu mẫu
+
+**Checkpoint sửa lỗi nhận dung lượng khi lưu Gallery (09/10/2026):** Người dùng báo app Android hoạt động ổn định ở các chức năng khác, nhưng lưu PNG/JPEG đều báo “Không thể chuẩn bị lưu ảnh: Kích thước ảnh không hợp lệ.” Ảnh chụp xác nhận PNG 1440×1276 đã được tạo, preview hiện và UI báo 1.990.141 byte; ảnh chụp không chứng minh file đã vào thư viện.
 
 **Nguyên nhân và bản sửa:** `androidGallery.ts` gửi `size: blob.size`; Android JSON đọc số nguyên nhỏ thành `Integer`, còn `PluginCall.getLong()` trong Capacitor 8.5.2 chỉ nhận `Long`, nên plugin nhận `null` và từ chối trước khi tạo mục MediaStore/file. `GallerySavePlugin.java` đọc giá trị JSON, chấp nhận `Integer` hoặc `Long` dương rồi chuyển sang `long`; vẫn từ chối thiếu/sai kiểu/số không dương và giữ kiểm tra chunk/ghi đủ byte. Chi tiết tại Walkthrough mục 35.
 

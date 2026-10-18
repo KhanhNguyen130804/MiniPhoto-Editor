@@ -1,5 +1,7 @@
-import { filters, type FabricImage, type TMatColorMatrix } from 'fabric';
+import { Canvas2dFilterBackend, filters, getFilterBackend, setFilterBackend, WebGLFilterBackend, type FabricImage, type TMatColorMatrix } from 'fabric';
 import type { EditorSnapshot, ImageAppearanceSnapshot, PresetId } from './snapshot';
+import { ColorTransferFilter } from './ColorTransferFilter';
+import { normalizeColorTransfer } from './colorTransfer';
 
 export type ImageAdjustments = Pick<EditorSnapshot['imageAppearance'], 'brightness' | 'contrast' | 'saturation'>;
 type FilterInput = ImageAdjustments | ImageAppearanceSnapshot;
@@ -63,6 +65,7 @@ export function createCompareSnapshot(snapshot: EditorSnapshot): EditorSnapshot 
       brightness: 0,
       contrast: 0,
       saturation: 0,
+      colorTransfer: null,
     },
     scene: snapshot.scene.map((item) => ({
       ...item,
@@ -108,6 +111,8 @@ export function createAdjustmentFilters(adjustments: FilterInput): FabricImage['
   }
 
   return [
+    ...('colorTransfer' in adjustments && normalizeColorTransfer(adjustments.colorTransfer)
+      ? [new ColorTransferFilter(adjustments.colorTransfer!)] : []),
     ...filtersForPreset,
     ...sliderFilters(recipe.brightness, recipe.contrast, recipe.saturation),
     ...sliderFilters(adjustments.brightness, adjustments.contrast, adjustments.saturation),
@@ -116,5 +121,20 @@ export function createAdjustmentFilters(adjustments: FilterInput): FabricImage['
 
 export function applyImageAdjustments(image: FabricImage, adjustments: FilterInput): void {
   image.filters = createAdjustmentFilters(adjustments);
-  image.applyFilters();
+  if (!image.filters.length) { image.applyFilters(); return; }
+  const backend = getFilterBackend();
+  const size = image.getOriginalSize();
+  // Fabric's GL canvas is fixed-size; larger sources would otherwise be clipped.
+  const needsCpu = backend instanceof WebGLFilterBackend
+    && (size.width > backend.tileSize || size.height > backend.tileSize);
+  if (needsCpu) setFilterBackend(new Canvas2dFilterBackend());
+  try {
+    image.applyFilters();
+    if (!needsCpu && backend instanceof WebGLFilterBackend
+      && (!backend.gl || backend.gl.isContextLost() || backend.gl.getError() !== backend.gl.NO_ERROR)) {
+      throw new Error('Không render được bộ lọc WebGL. Các chỉnh sửa đã áp dụng vẫn được giữ. Hãy thử lại.');
+    }
+  } finally {
+    if (needsCpu) setFilterBackend(backend);
+  }
 }

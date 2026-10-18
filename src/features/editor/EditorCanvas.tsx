@@ -15,6 +15,8 @@ type Size = { width: number; height: number };
 
 type EditorCanvasProps = {
   snapshot: EditorSnapshot;
+  appearanceRequest?: number;
+  onAppearanceRenderResult?: (request: number, error?: string) => void;
   image: FabricImage | null;
   detachImageRef: { current: ((image: FabricImage) => void) | null };
   onTransform: (command: GeometryCommand) => void;
@@ -135,6 +137,8 @@ function fitZoom(documentSize: Size, viewportSize: Size) {
 
 const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function EditorCanvas({
   snapshot,
+  appearanceRequest,
+  onAppearanceRenderResult,
   image,
   detachImageRef,
   onTransform,
@@ -184,6 +188,8 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
   const panStartRef = useRef<PanStart | null>(null);
   const cropDragRef = useRef<CropDrag | null>(null);
   const filterFrameRef = useRef<number | null>(null);
+  const appearanceResultRef = useRef(onAppearanceRenderResult);
+  appearanceResultRef.current = onAppearanceRenderResult;
   const [viewportSize, setViewportSize] = useState<Size>({ width: 0, height: 0 });
   const [viewportTransform, setViewportTransform] = useState<TMat2D>([1, 0, 0, 1, 0, 0]);
   const [zoom, setZoom] = useState(1);
@@ -1034,9 +1040,13 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       if (imageRef.current !== targetImage) return;
       try {
         applyImageAdjustments(targetImage, appearance);
-        canvasRef.current?.requestRenderAll();
-      } catch {
-        setCanvasError(true);
+        canvasRef.current?.renderAll();
+        setCanvasError(false);
+        if (appearanceRequest !== undefined) appearanceResultRef.current?.(appearanceRequest);
+      } catch (error) {
+        if (appearanceRequest !== undefined && appearanceResultRef.current) {
+          appearanceResultRef.current(appearanceRequest, error instanceof Error ? error.message : 'Lỗi render ảnh.');
+        } else setCanvasError(true);
       }
     });
     return () => {
@@ -1044,7 +1054,8 @@ const EditorCanvas = forwardRef<EditorCanvasHandle, EditorCanvasProps>(function 
       filterFrameRef.current = null;
     };
   }, [image, snapshot.imageAppearance.presetId, snapshot.imageAppearance.presetVersion,
-    snapshot.imageAppearance.brightness, snapshot.imageAppearance.contrast, snapshot.imageAppearance.saturation]);
+    snapshot.imageAppearance.brightness, snapshot.imageAppearance.contrast, snapshot.imageAppearance.saturation,
+    snapshot.imageAppearance.colorTransfer, appearanceRequest]);
 
   useEffect(() => {
     const canvas = canvasRef.current;

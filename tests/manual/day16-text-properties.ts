@@ -70,7 +70,7 @@ function textIn(snapshot: EditorSnapshot, id: string): TextOverlaySnapshot {
 async function runAssertions(): Promise<string[]> {
   const lines: string[] = [];
   const baseline = createImageBaselineSnapshot('day16-properties-fixture', 320, 220);
-  assert(baseline.schemaVersion === 2, 'Text property fields require editor snapshot schema version 2.');
+  assert(baseline.schemaVersion === 3, 'Text properties and color transfer require editor snapshot schema version 3.');
   const created = createDefaultTextObject(baseline, 'day16-text');
   assert(created.overlay.fontFamily === 'Noto Sans' && created.overlay.fontSize === 13
     && created.overlay.fontWeight === 400 && created.overlay.fontStyle === 'normal'

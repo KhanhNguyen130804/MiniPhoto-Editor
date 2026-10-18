@@ -42,7 +42,7 @@ async function run(): Promise<string[]> {
     const edited: EditorSnapshot = {
       ...baseline,
       documentTransform: [0, 1, -1, 0, candidate.height, 0],
-      imageAppearance: { presetId: 'vivid', presetVersion: 1, brightness: 24, contrast: -15, saturation: 33 },
+      imageAppearance: { presetId: 'vivid', presetVersion: 1, brightness: 24, contrast: -15, saturation: 33, colorTransfer: null },
       scene: [{ ...baseline.scene[0]!, visible: false, left: 4, top: 6, angle: 90 }, overlay],
     };
     const originalJson = JSON.stringify(edited);

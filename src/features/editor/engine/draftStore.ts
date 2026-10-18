@@ -2,7 +2,7 @@ import type { ImageImportCandidate, ImageFileMetadata } from './imageImport';
 import { MAX_IMPORT_FILE_BYTES, MAX_IMAGE_EDGE, MAX_IMAGE_PIXELS } from './imageImport';
 import { DRAFT_THUMBNAIL_MAX_BYTES, renderDraftThumbnail } from './draftThumbnail';
 import { CURRENT_PRESET_VERSION } from './adjustmentFilters';
-import { validateEditorSnapshot } from './draftValidation';
+import { parseEditorSnapshot, validateEditorSnapshot } from './draftValidation';
 import type { EditorSnapshot } from './snapshot';
 import { createUuid } from './uuid';
 
@@ -369,10 +369,20 @@ export async function readCurrentDraft(): Promise<SavedCurrentDraft | null> {
   try {
     await done;
     if (loadError) throw loadError;
-    return result;
+    return result ? normalizeSavedDraft(result) : null;
   } finally {
     db.close();
   }
+}
+
+function normalizeSavedDraft(saved: SavedCurrentDraft): SavedCurrentDraft {
+  if (!validDraftMetadata(saved.draft, saved.asset.id) || !validAsset(saved.asset, saved.asset.id)
+    || !isRecord(saved.draft.snapshot) || saved.draft.schemaVersion !== saved.draft.snapshot.schemaVersion
+    || saved.draft.presetVersion !== CURRENT_PRESET_VERSION) {
+    throw new TypeError('Phiên bản hoặc thông tin bản nháp không hợp lệ.');
+  }
+  const snapshot = parseEditorSnapshot(saved.draft.snapshot, saved.asset);
+  return { asset: saved.asset, draft: { ...saved.draft, snapshot, schemaVersion: snapshot.schemaVersion } };
 }
 
 export async function inspectCurrentDraft(): Promise<CurrentDraftInspection> {
@@ -409,11 +419,7 @@ export async function inspectCurrentDraft(): Promise<CurrentDraftInspection> {
 
     const saved = { asset: rawAsset, draft: rawDraft };
     try {
-      if (saved.draft.schemaVersion !== 2 || saved.draft.presetVersion !== CURRENT_PRESET_VERSION) {
-        throw new TypeError('Phiên bản bản nháp chưa được hỗ trợ.');
-      }
-      validateEditorSnapshot(saved.draft.snapshot, saved.asset);
-      return { kind: 'ready', saved };
+      return { kind: 'ready', saved: normalizeSavedDraft(saved) };
     } catch (error) {
       return {
         kind: 'source-only',

@@ -1,5 +1,9 @@
 # MiniPhoto Editor — Decision Log
 
+## Bổ sung 16/10/2026 — màu từ ảnh mẫu
+
+Người dùng duyệt và giao triển khai plan lấy tông màu tổng thể. Chọn CIELAB sRGB/D65 mean/std, phân tích cạnh dài ≤256 px, alpha-weighted, default strength 70%, pipeline trước preset/sliders và hai backend CPU/WebGL. Dùng bảng tra chuyển đổi cho CPU; sai số RGB được kiểm bằng harness. Một tham chiếu tạm không trở thành layer hoặc source asset thứ hai. Snapshot nâng 2→3, migration trong RAM; DB object stores/version giữ nguyên. Các giới hạn và evidence tại [COLOR_TRANSFER.md](COLOR_TRANSFER.md); chưa coi chất lượng ảnh thật/Android hay performance gate toàn sản phẩm đã đạt.
+
 Ngày: 07/10/2026 (Asia/Saigon)
 
 Phạm vi: Phase 0, Day 1. Đây là quyết định khởi tạo cho MVP; không phải bằng chứng tính năng chỉnh ảnh đã hoạt động.
